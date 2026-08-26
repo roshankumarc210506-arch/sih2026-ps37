@@ -4,3 +4,4 @@
 *.mex*
 slprj/
 *.slxc
+!data/*.mat
