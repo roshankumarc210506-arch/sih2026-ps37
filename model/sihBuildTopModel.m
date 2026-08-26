@@ -27,7 +27,7 @@ function sihBuildTopModel()
     % base rate for Day 1; per-subsystem rates come in Phase 1 once each
     % module is real and we know its actual cadence.
 
-    %% ---- Load M1's real Day-1 fused-track data into base workspace ----
+    %% ---- Perception: CONFIRMED dummy stub for Day 1 -----------------------
     dataFile = fullfile(pwd, 'data', 'm1_perception_day1.mat');
     assert(isfile(dataFile), 'data/m1_perception_day1.mat not found -- check repo path.');
     load(dataFile, 'perceptionData', 'egoData'); %#ok<LOAD>
