@@ -48,7 +48,16 @@ while advance(scenario)
     if isempty(dets)
         tracks = predictTracksToTime(tracker, 'confirmed', t);
     else
-        tracks = tracker(dets, t);
+        for s = 1:numel(cfg.Sensor)
+            sd = dets(cellfun(@(d) d.SensorIndex == s, dets));
+            if ~isempty(sd)
+                ts = t + (s-1)*1e-4;
+                for k = 1:numel(sd)
+                    sd{k}.Time = ts;   % match the step-call time: OOSMHandling checks each detection's own Time against it
+                end
+                tracks = tracker(sd, ts);
+            end
+        end
     end
 
     classes = sihClassVoter('update', tracks, dets, cfg);
