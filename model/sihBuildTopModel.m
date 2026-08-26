@@ -19,7 +19,10 @@ function sihBuildTopModel()
     end
     new_system(modelName);
     open_system(modelName);
-    set_param(modelName, 'InitFcn', 'sihDefineBuses();');
+    set_param(modelName, 'InitFcn', [...
+    'sihDefineBuses(); ' ...
+    'perceptionStub = Simulink.Bus.createMATLABStruct(''SihPerceptionBus''); ' ...
+    'egoStub = Simulink.Bus.createMATLABStruct(''SihEgoBus''); ' ]);
     set_param(modelName, 'Solver', 'FixedStepDiscrete', 'FixedStep', '0.1');
     % 0.1s matches M4's Control Ts directly, per M4's Day-1 request.
 
