@@ -41,7 +41,7 @@ smoothTrajectory(a, [150 2 0; 100 2 0; 55 1.5 0; 10 1.5 0], 7);
 classOf(a.ActorID) = AgentClass.Car;
 
 % ---------------- 2. Two-wheeler weaving ahead of ego ----------------
-a = actor(scenario, 'ClassID', double(AgentClass.TwoWheeler), 'Name','TwoWheeler', ...
+a = actor(scenario, 'ClassID', 3, 'Name','TwoWheeler', ...  % 3=Bicycle: drivingScenario actor() only accepts {3,4,5,6}; AgentClass.TwoWheeler(2) is invalid here and silently degrades to a vehicle actor
     'Length',1.9,'Width',0.7,'Height',1.4,'Position',[25 -2.5 0]);
 smoothTrajectory(a, [25 -2.5 0; 45 -0.5 0; 65 -2.6 0; 90 -0.8 0; 120 6 0; 160 10 0], 9);
 classOf(a.ActorID) = AgentClass.TwoWheeler;
