@@ -32,7 +32,8 @@ sihClassVoter('reset');
 % ---------------- logging ----------------
 log = struct('time', {}, 'tracks', {}, 'num_tracks', {}, 'ego', {});
 val = struct('posErr', [], 'classOK', [], 'classTotal', 0, ...
-             'nTruth', [], 'nTrack', []);
+             'nTruth', [], 'nTrack', [], 'falseTracks', [], 'missedObjects', [], ...
+             'perClassTotal', zeros(1,7), 'perClassCorrect', zeros(1,7));
 
 if opts.Visualize
     [bep, plotters] = localSetupPlot(cfg);
@@ -88,12 +89,14 @@ results.trackerName = trackerName;
 results.log         = log;
 results.numFrames   = numel(log);
 
-results.posRMSE      = sqrt(mean(val.posErr.^2, 'omitnan'));
-results.posP95       = prctileLite(val.posErr, 95);
-results.classAcc     = sum(val.classOK) / max(val.classTotal, 1);
-results.meanTracks   = mean(val.nTrack);
-results.meanTruth    = mean(val.nTruth);
-results.trackYield   = results.meanTracks / max(results.meanTruth, eps);
+results.posRMSE          = sqrt(mean(val.posErr.^2, 'omitnan'));
+results.posP95           = prctileLite(val.posErr, 95);
+results.classAcc         = sum(val.classOK) / max(val.classTotal, 1);
+results.meanTracks       = mean(val.nTrack);
+results.meanTruth        = mean(val.nTruth);
+results.trackYield       = results.meanTracks / max(results.meanTruth, eps);
+results.falseTracksMean  = mean(val.falseTracks);
+results.missedObjectsMean= mean(val.missedObjects);
 
 fprintf('\n=============== M1 PERCEPTION — DAY 1 RESULT ===============\n');
 fprintf('  Tracker used ............. %s\n',        results.trackerName);
@@ -103,6 +106,18 @@ fprintf('  Position error p95 ....... %.2f m\n',    results.posP95);
 fprintf('  Classification accuracy .. %.1f %%\n',   100*results.classAcc);
 fprintf('  Mean tracks / mean truth . %.2f / %.2f  (yield %.0f %%)\n', ...
         results.meanTracks, results.meanTruth, 100*results.trackYield);
+fprintf('  False tracks / frame (mean)   . %.2f\n', results.falseTracksMean);
+fprintf('  Missed objects / frame (mean) . %.2f\n',  results.missedObjectsMean);
+fprintf('------------------------------------------------------------\n');
+fprintf('  Per-class accuracy (matched tracks only):\n');
+fprintf('    %-14s %8s %8s %8s\n', 'Class', 'Correct', 'Total', 'Acc %');
+for v = 1:6
+    cls  = AgentClass(v);
+    tot  = val.perClassTotal(v+1);
+    corr = val.perClassCorrect(v+1);
+    pct  = 100 * corr / max(tot, 1);
+    fprintf('    %-14s %8d %8d %8.1f\n', char(cls), corr, tot, pct);
+end
 fprintf('============================================================\n');
 fprintf('Bus format verified: {id, class, x, y, heading, velocity, covariance}\n');
 fprintf('Fixed array of %d + num_tracks + timestamp. Ego pose on side bus.\n\n', cfg.MaxTracks);
@@ -114,27 +129,62 @@ end
 
 % ========================================================================
 function val = localValidate(val, trackArray, n, poses, classOf)
-%LOCALVALIDATE  Nearest-neighbour match of tracks to ground truth.
+%LOCALVALIDATE  Greedy one-to-one match of tracks to ground truth.
+%   Repeatedly takes the globally smallest track-truth distance, assigns
+%   that pair, and removes both from contention, until the smallest
+%   remaining distance exceeds the gate. Prevents multiple tracks from
+%   all being scored against the same truth object (which happens with
+%   plain nearest-neighbour matching whenever tracks outnumber truths).
 gate = 3.0;   % m
+n = double(n);
 nTruth = numel(poses);
 val.nTruth(end+1) = nTruth;
-val.nTrack(end+1) = double(n);
-if n == 0 || nTruth == 0, return; end
+val.nTrack(end+1) = n;
+
+if n == 0 || nTruth == 0
+    val.falseTracks(end+1)   = n;
+    val.missedObjects(end+1) = nTruth;
+    return
+end
 
 tp = zeros(nTruth, 2);
 for k = 1:nTruth
     tp(k,:) = poses(k).Position(1:2);
 end
 
-for i = 1:double(n)
-    d = hypot(tp(:,1) - trackArray(i).x, tp(:,2) - trackArray(i).y);
-    [dmin, k] = min(d);
-    if dmin > gate, continue; end
-
-    val.posErr(end+1) = dmin;
-    val.classTotal    = val.classTotal + 1;
-    val.classOK(end+1) = double(trackArray(i).class == classOf(poses(k).ActorID));
+cost = zeros(n, nTruth);
+for i = 1:n
+    cost(i,:) = hypot(tp(:,1) - trackArray(i).x, tp(:,2) - trackArray(i).y)';
 end
+
+matchedTrack = false(n, 1);
+matchedTruth = false(nTruth, 1);
+
+while true
+    C = cost;
+    C(matchedTrack, :) = Inf;
+    C(:, matchedTruth) = Inf;
+    [dmin, idx] = min(C(:));
+    if isinf(dmin) || dmin > gate, break; end
+
+    [i, k] = ind2sub(size(C), idx);
+    matchedTrack(i) = true;
+    matchedTruth(k) = true;
+
+    truthClass = classOf(poses(k).ActorID);
+    isOK = double(trackArray(i).class == truthClass);
+
+    val.posErr(end+1)  = dmin;
+    val.classTotal     = val.classTotal + 1;
+    val.classOK(end+1) = isOK;
+
+    cIdx = double(truthClass) + 1;   % AgentClass 0..6 -> index 1..7
+    val.perClassTotal(cIdx)   = val.perClassTotal(cIdx) + 1;
+    val.perClassCorrect(cIdx) = val.perClassCorrect(cIdx) + isOK;
+end
+
+val.falseTracks(end+1)   = sum(~matchedTrack);
+val.missedObjects(end+1) = sum(~matchedTruth);
 end
 
 % ========================================================================
