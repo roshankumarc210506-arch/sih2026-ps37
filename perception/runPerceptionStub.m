@@ -15,6 +15,8 @@ function results = runPerceptionStub(varargin)
 %   Prints a validation summary against ground truth so you have real
 %   numbers for the Phase-1 checkpoint and the report, not just "it runs".
 
+addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'buses'));  % AgentClass, sihCreateBuses moved here
+
 p = inputParser;
 addParameter(p, 'Visualize', true,  @islogical);
 addParameter(p, 'Export',    false, @islogical);
