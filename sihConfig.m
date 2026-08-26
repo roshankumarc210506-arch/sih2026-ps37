@@ -61,6 +61,13 @@ cfg.Tracker.InitVelStd            = 6;    % m/s, initial velocity uncertainty
 cfg.MinSpeedForHeading = 0.25;  % m/s below this, heading is unreliable
 cfg.StationaryHeadingVar = (pi/3)^2; % rad^2 injected when nearly stationary
 
+% ---------- Planning region of interest (validation metric only) ----------
+% Restricts the validation summary to objects that actually matter for
+% planning, so long-range/behind-ego misses (a coverage-geometry artefact,
+% not a tracker defect) don't dominate the aggregate numbers.
+cfg.ROI.MaxRange   = 40;    % m
+cfg.ROI.MaxAbsAzim = 90;    % deg, forward half-plane only
+
 % ---------- Class confusion (stub only; realistic pairs) ----------
 % Which class a sensor is most likely to mistake a given class for.
 cfg.ConfusionPairs = { ...

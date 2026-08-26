@@ -48,7 +48,10 @@ val = struct('posErr', [], 'classOK', [], 'classTotal', 0, ...
              'rangeBinMiss', zeros(1,11), 'rangeBinTotal', zeros(1,11), ...  % 10x10m bins (0-100) + 1 overflow (>100m)
              'azBinMiss', zeros(1,3), 'azBinTotal', zeros(1,3), ...
              'actorPresent', containers.Map('KeyType','double','ValueType','double'), ...
-             'actorTracked', containers.Map('KeyType','double','ValueType','double'));
+             'actorTracked', containers.Map('KeyType','double','ValueType','double'), ...
+             'posErrROI', [], 'classOKROI', [], 'classTotalROI', 0, ...
+             'missedObjectsROI', [], 'falseTracksROI', [], ...
+             'perClassTotalROI', zeros(1,7), 'perClassCorrectROI', zeros(1,7));
 
 if opts.Visualize
     [bep, plotters] = localSetupPlot(cfg);
@@ -92,7 +95,7 @@ while advance(scenario)
     log(end+1) = struct('time', t, 'tracks', trackArray, ...
                         'num_tracks', n, 'ego', ego);          %#ok<AGROW>
 
-    val = localValidate(val, trackArray, n, poses, classOf, t);
+    val = localValidate(val, trackArray, n, poses, classOf, t, cfg);
 
     if opts.Visualize
         localUpdatePlot(bep, plotters, dets, trackArray, n, poses, cfg);
@@ -113,9 +116,15 @@ results.trackYield       = results.meanTracks / max(results.meanTruth, eps);
 results.falseTracksMean  = mean(val.falseTracks);
 results.missedObjectsMean= mean(val.missedObjects);
 
+results.posRMSEROI           = sqrt(mean(val.posErrROI.^2, 'omitnan'));
+results.classAccROI          = sum(val.classOKROI) / max(val.classTotalROI, 1);
+results.missedObjectsMeanROI = mean(val.missedObjectsROI);
+results.falseTracksMeanROI   = mean(val.falseTracksROI);
+
 fprintf('\n=============== M1 PERCEPTION — DAY 1 RESULT ===============\n');
 fprintf('  Tracker used ............. %s\n',        results.trackerName);
 fprintf('  Frames simulated ......... %d\n',        results.numFrames);
+fprintf('  ---- ALL RANGES ----\n');
 fprintf('  Position RMSE ............ %.2f m\n',    results.posRMSE);
 fprintf('  Position error p95 ....... %.2f m\n',    results.posP95);
 fprintf('  Classification accuracy .. %.1f %%\n',   100*results.classAcc);
@@ -123,15 +132,23 @@ fprintf('  Mean tracks / mean truth . %.2f / %.2f  (yield %.0f %%)\n', ...
         results.meanTracks, results.meanTruth, 100*results.trackYield);
 fprintf('  False tracks / frame (mean)   . %.2f\n', results.falseTracksMean);
 fprintf('  Missed objects / frame (mean) . %.2f\n',  results.missedObjectsMean);
+fprintf('  ---- PLANNING ROI (%gm, forward) ----\n', cfg.ROI.MaxRange);
+fprintf('  Position RMSE ............ %.2f m\n',    results.posRMSEROI);
+fprintf('  Classification accuracy .. %.1f %%\n',   100*results.classAccROI);
+fprintf('  Missed objects / frame (mean) . %.2f\n',  results.missedObjectsMeanROI);
+fprintf('  False tracks / frame (mean)   . %.2f\n', results.falseTracksMeanROI);
 fprintf('------------------------------------------------------------\n');
 fprintf('  Per-class accuracy (matched tracks only):\n');
-fprintf('    %-14s %8s %8s %8s\n', 'Class', 'Correct', 'Total', 'Acc %');
+fprintf('    %-14s %8s %8s %8s | %8s %8s %8s\n', 'Class', 'Correct', 'Total', 'Acc %', 'ROI-Cor', 'ROI-Tot', 'ROI-Acc%');
 for v = 1:6
-    cls  = AgentClass(v);
-    tot  = val.perClassTotal(v+1);
-    corr = val.perClassCorrect(v+1);
-    pct  = 100 * corr / max(tot, 1);
-    fprintf('    %-14s %8d %8d %8.1f\n', char(cls), corr, tot, pct);
+    cls     = AgentClass(v);
+    tot     = val.perClassTotal(v+1);
+    corr    = val.perClassCorrect(v+1);
+    pct     = 100 * corr / max(tot, 1);
+    totROI  = val.perClassTotalROI(v+1);
+    corrROI = val.perClassCorrectROI(v+1);
+    pctROI  = 100 * corrROI / max(totROI, 1);
+    fprintf('    %-14s %8d %8d %8.1f | %8d %8d %8.1f\n', char(cls), corr, tot, pct, corrROI, totROI, pctROI);
 end
 
 fprintf('------------------------------------------------------------\n');
@@ -195,7 +212,7 @@ end
 end
 
 % ========================================================================
-function val = localValidate(val, trackArray, n, poses, classOf, t)
+function val = localValidate(val, trackArray, n, poses, classOf, t, cfg)
 %LOCALVALIDATE  Greedy one-to-one match of tracks to ground truth.
 %   Repeatedly takes the globally smallest track-truth distance, assigns
 %   that pair, and removes both from contention, until the smallest
@@ -206,6 +223,13 @@ function val = localValidate(val, trackArray, n, poses, classOf, t)
 %   Also logs, for every unmatched truth object (a miss): its AgentClass,
 %   range and azimuth from ego, and the frame time — diagnostics only,
 %   doesn't affect matching or any existing metric.
+%
+%   Alongside the all-range metrics, accumulates a second, ROI-restricted
+%   set (cfg.ROI.MaxRange / cfg.ROI.MaxAbsAzim): matched pairs, false
+%   tracks, and missed objects are additionally counted only when the
+%   relevant truth (or, for false tracks, the track itself) falls inside
+%   the planning region. Purely additive — every existing accumulator and
+%   the matching logic itself are untouched.
 gate = 3.0;   % m
 n = double(n);
 nTruth = numel(poses);
@@ -219,12 +243,14 @@ tp    = zeros(nTruth, 2);
 rng_  = zeros(nTruth, 1);
 az_   = zeros(nTruth, 1);
 truthClassArr = repmat(AgentClass.Unknown, nTruth, 1);
+truthInROI    = false(nTruth, 1);
 
 for k = 1:nTruth
     pk = poses(k).Position;
     tp(k,:) = pk(1:2);
     rng_(k) = hypot(pk(1), pk(2));
     az_(k)  = atan2d(pk(2), pk(1));
+    truthInROI(k) = localInROI(rng_(k), az_(k), cfg);
 
     aid = poses(k).ActorID;
     truthClassArr(k) = classOf(aid);
@@ -251,6 +277,8 @@ end
 if n == 0 || nTruth == 0
     val.falseTracks(end+1)   = n;
     val.missedObjects(end+1) = nTruth;
+    val.falseTracksROI(end+1)   = 0;
+    val.missedObjectsROI(end+1) = sum(truthInROI);
     for k = 1:nTruth
         val = localLogMiss(val, truthClassArr(k), rng_(k), az_(k), t);
     end
@@ -258,8 +286,12 @@ if n == 0 || nTruth == 0
 end
 
 cost = zeros(n, nTruth);
+trackInROI = false(n, 1);
 for i = 1:n
     cost(i,:) = hypot(tp(:,1) - trackArray(i).x, tp(:,2) - trackArray(i).y)';
+    trackRange = hypot(trackArray(i).x, trackArray(i).y);
+    trackAz    = atan2d(trackArray(i).y, trackArray(i).x);
+    trackInROI(i) = localInROI(trackRange, trackAz, cfg);
 end
 
 matchedTrack = false(n, 1);
@@ -286,10 +318,20 @@ while true
     cIdx = double(truthClass) + 1;   % AgentClass 0..6 -> index 1..7
     val.perClassTotal(cIdx)   = val.perClassTotal(cIdx) + 1;
     val.perClassCorrect(cIdx) = val.perClassCorrect(cIdx) + isOK;
+
+    if truthInROI(k)
+        val.posErrROI(end+1)  = dmin;
+        val.classTotalROI     = val.classTotalROI + 1;
+        val.classOKROI(end+1) = isOK;
+        val.perClassTotalROI(cIdx)   = val.perClassTotalROI(cIdx) + 1;
+        val.perClassCorrectROI(cIdx) = val.perClassCorrectROI(cIdx) + isOK;
+    end
 end
 
 val.falseTracks(end+1)   = sum(~matchedTrack);
 val.missedObjects(end+1) = sum(~matchedTruth);
+val.falseTracksROI(end+1)   = sum(~matchedTrack & trackInROI);
+val.missedObjectsROI(end+1) = sum(~matchedTruth & truthInROI);
 
 for k = 1:nTruth
     aid = poses(k).ActorID;
@@ -300,6 +342,12 @@ for k = 1:nTruth
         val = localLogMiss(val, truthClassArr(k), rng_(k), az_(k), t);
     end
 end
+end
+
+% ========================================================================
+function tf = localInROI(rangeVal, azVal, cfg)
+%LOCALINROI  True if a range/azimuth pair falls inside the planning ROI.
+tf = (rangeVal <= cfg.ROI.MaxRange) && (abs(azVal) <= cfg.ROI.MaxAbsAzim);
 end
 
 % ========================================================================
