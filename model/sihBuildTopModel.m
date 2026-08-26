@@ -32,8 +32,8 @@ function sihBuildTopModel()
     % TODO(M6, Phase 1 / Day 2): wire M1's real m1_perception_day1.mat
     % playback properly -- needs a MATLAB Function block or Dataset-based
     % approach, not From Workspace directly on nested struct data.
-    perceptionStub = Simulink.Bus.createMATLABStruct(SihPerceptionBus);
-    egoStub        = Simulink.Bus.createMATLABStruct(SihEgoBus);
+    perceptionStub = Simulink.Bus.createMATLABStruct('SihPerceptionBus');
+    egoStub        = Simulink.Bus.createMATLABStruct('SihEgoBus');
     assignin('base', 'perceptionStub', perceptionStub);
     assignin('base', 'egoStub', egoStub);
 
