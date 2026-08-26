@@ -70,7 +70,7 @@ SihControlCmdBus.Description = ['Control output. NOTE the third field: ' ...
 % fields and types match the bus exactly. Feeding THAT to a Constant block
 % is far less error-prone than wiring three Constants into a Bus Creator
 % and hand-naming the signal lines to match element names.
-m4StubCmd = Simulink.Bus.createMATLABStruct('SihControlCmdBus');
+m4StubCmd = Simulink.Bus.createMATLABStruct(SihControlCmdBus);
 m4StubCmd.steering_angle = 0;
 m4StubCmd.acceleration   = 0;
 m4StubCmd.speedCap_mps   = 8.33;      % CRUISE cap, so the stub is not a STOP
