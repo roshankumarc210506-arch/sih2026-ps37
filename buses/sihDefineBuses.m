@@ -77,12 +77,13 @@ function sihDefineBuses()
     % (nonvirtual bus ports require an EXACT type match, so there must be
     % only one place these get defined). Do not redefine them here.
     %
-    % OPEN ITEM as of Day 1: MAX_WAYPOINTS is set to 5000 in M4's script,
-    % asserted as "per M3's contract" but not yet confirmed by M3 directly
-    % -- M3's real output already hit 223 waypoints on a placeholder map.
-    % Directions dtype/shape (int8 row vs double column) is also still an
-    % open question for M3 to settle. Do not treat 5000/double as final
-    % until M3 confirms.
+    % CONFIRMED by M3, Day 1: MAX_WAYPOINTS = 5000 matches
+    % cfg.Bus.MaxWaypoints and cfg.Plan.MaxNumPathStates in
+    % planner_config.m -- both locked at 5000. Directions is double (not
+    % int8): plannerHybridAStar natively returns int8, but it gets cast to
+    % double in assignVelocityProfile.m and stays double through
+    % packPlanBus.m; M4's NMPC code already assumes double, so double is
+    % the final answer, not a placeholder. Both settled -- treat as final.
     assert(exist('createM4BusObjects', 'file') > 0, ...
         'createM4BusObjects.m (M4''s bus script) not found on path.');
     createM4BusObjects();
@@ -110,6 +111,6 @@ function sihDefineBuses()
     clear mode
 
     disp('sihDefineBuses: called sihCreateBuses() [M1] and createM4BusObjects() [M4], then created SihPredictionBus and SihDrivingModeBus [M6].');
-    disp('NOTE: SihPlanBus.Waypoints max rows (5000) and Directions dtype are unconfirmed by M3 as of Day 1 -- do not treat as final.');
+    disp('Bus contract fully settled as of Day 1: SihPlanBus.Waypoints=5000 rows, Directions=double, confirmed by M3.');
     disp('All bus objects now defined in base workspace via a single call: sihDefineBuses().');
 end
