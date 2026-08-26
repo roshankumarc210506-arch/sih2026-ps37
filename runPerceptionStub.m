@@ -29,11 +29,26 @@ sihCreateBuses(cfg);
 [tracker, trackerName]          = sihCreateTracker(cfg);
 sihClassVoter('reset');
 
+% ---- actor names, for the per-actor diagnostic table (diagnostics only) ----
+nameMap = containers.Map('KeyType','double','ValueType','char');
+for kA = 1:numel(scenario.Actors)
+    act = scenario.Actors(kA);
+    if isKey(classOf, act.ActorID)   % excludes ego, which has no classOf entry
+        nameMap(act.ActorID) = act.Name;
+    end
+end
+
 % ---------------- logging ----------------
 log = struct('time', {}, 'tracks', {}, 'num_tracks', {}, 'ego', {});
 val = struct('posErr', [], 'classOK', [], 'classTotal', 0, ...
              'nTruth', [], 'nTrack', [], 'falseTracks', [], 'missedObjects', [], ...
-             'perClassTotal', zeros(1,7), 'perClassCorrect', zeros(1,7));
+             'perClassTotal', zeros(1,7), 'perClassCorrect', zeros(1,7), ...
+             'classPresent', zeros(1,7), 'classMatched', zeros(1,7), 'classMissed', zeros(1,7), ...
+             'missClass', [], 'missRange', [], 'missAzimuth', [], 'missTime', [], ...
+             'rangeBinMiss', zeros(1,11), 'rangeBinTotal', zeros(1,11), ...  % 10x10m bins (0-100) + 1 overflow (>100m)
+             'azBinMiss', zeros(1,3), 'azBinTotal', zeros(1,3), ...
+             'actorPresent', containers.Map('KeyType','double','ValueType','double'), ...
+             'actorTracked', containers.Map('KeyType','double','ValueType','double'));
 
 if opts.Visualize
     [bep, plotters] = localSetupPlot(cfg);
@@ -77,7 +92,7 @@ while advance(scenario)
     log(end+1) = struct('time', t, 'tracks', trackArray, ...
                         'num_tracks', n, 'ego', ego);          %#ok<AGROW>
 
-    val = localValidate(val, trackArray, n, poses, classOf);
+    val = localValidate(val, trackArray, n, poses, classOf, t);
 
     if opts.Visualize
         localUpdatePlot(bep, plotters, dets, trackArray, n, poses, cfg);
@@ -118,6 +133,58 @@ for v = 1:6
     pct  = 100 * corr / max(tot, 1);
     fprintf('    %-14s %8d %8d %8.1f\n', char(cls), corr, tot, pct);
 end
+
+fprintf('------------------------------------------------------------\n');
+fprintf('  MISSES BY CLASS:\n');
+fprintf('    %-14s %8s %8s %8s %8s\n', 'Class', 'Present', 'Matched', 'Missed', 'Miss %');
+for v = 1:6
+    cls   = AgentClass(v);
+    pres  = val.classPresent(v+1);
+    matc  = val.classMatched(v+1);
+    miss  = val.classMissed(v+1);
+    mrate = 100 * miss / max(pres, 1);
+    fprintf('    %-14s %8d %8d %8d %8.1f\n', char(cls), pres, matc, miss, mrate);
+end
+
+fprintf('------------------------------------------------------------\n');
+fprintf('  MISSES BY RANGE (10 m bins from ego):\n');
+fprintf('    %-14s %8s %8s %8s\n', 'Range', 'Misses', 'Total', 'Miss %');
+for b = 1:11
+    if b <= 10
+        label = sprintf('%d-%dm', (b-1)*10, b*10);
+    else
+        label = '>100m';
+    end
+    miss  = val.rangeBinMiss(b);
+    tot   = val.rangeBinTotal(b);
+    mrate = 100 * miss / max(tot, 1);
+    fprintf('    %-14s %8d %8d %8.1f\n', label, miss, tot, mrate);
+end
+
+fprintf('------------------------------------------------------------\n');
+fprintf('  MISSES BY AZIMUTH:\n');
+fprintf('    %-14s %8s %8s %8s\n', 'Azimuth', 'Misses', 'Total', 'Miss %');
+azLabels = {'<=20 deg', '20-30 deg', '>30 deg'};
+for b = 1:3
+    miss  = val.azBinMiss(b);
+    tot   = val.azBinTotal(b);
+    mrate = 100 * miss / max(tot, 1);
+    fprintf('    %-14s %8d %8d %8.1f\n', azLabels{b}, miss, tot, mrate);
+end
+
+fprintf('------------------------------------------------------------\n');
+fprintf('  PER-ACTOR TRACKING:\n');
+fprintf('    %-14s %-14s %8s %8s %8s\n', 'Actor', 'Class', 'Present', 'Tracked', '% Tracked');
+actorIDs = sort(cell2mat(keys(nameMap)));
+for ai = 1:numel(actorIDs)
+    aid  = actorIDs(ai);
+    name = nameMap(aid);
+    cls  = classOf(aid);
+    pres = val.actorPresent(aid);
+    trk  = val.actorTracked(aid);
+    pct  = 100 * trk / max(pres, 1);
+    fprintf('    %-14s %-14s %8d %8d %8.1f\n', name, char(cls), pres, trk, pct);
+end
 fprintf('============================================================\n');
 fprintf('Bus format verified: {id, class, x, y, heading, velocity, covariance}\n');
 fprintf('Fixed array of %d + num_tracks + timestamp. Ego pose on side bus.\n\n', cfg.MaxTracks);
@@ -128,28 +195,66 @@ end
 end
 
 % ========================================================================
-function val = localValidate(val, trackArray, n, poses, classOf)
+function val = localValidate(val, trackArray, n, poses, classOf, t)
 %LOCALVALIDATE  Greedy one-to-one match of tracks to ground truth.
 %   Repeatedly takes the globally smallest track-truth distance, assigns
 %   that pair, and removes both from contention, until the smallest
 %   remaining distance exceeds the gate. Prevents multiple tracks from
 %   all being scored against the same truth object (which happens with
 %   plain nearest-neighbour matching whenever tracks outnumber truths).
+%
+%   Also logs, for every unmatched truth object (a miss): its AgentClass,
+%   range and azimuth from ego, and the frame time — diagnostics only,
+%   doesn't affect matching or any existing metric.
 gate = 3.0;   % m
 n = double(n);
 nTruth = numel(poses);
 val.nTruth(end+1) = nTruth;
 val.nTrack(end+1) = n;
 
+% ---- per-truth position/range/azimuth/class, and presence tallies ----
+% (computed regardless of match outcome, so "present" counts are correct
+% even on frames with zero tracks)
+tp    = zeros(nTruth, 2);
+rng_  = zeros(nTruth, 1);
+az_   = zeros(nTruth, 1);
+truthClassArr = repmat(AgentClass.Unknown, nTruth, 1);
+
+for k = 1:nTruth
+    pk = poses(k).Position;
+    tp(k,:) = pk(1:2);
+    rng_(k) = hypot(pk(1), pk(2));
+    az_(k)  = atan2d(pk(2), pk(1));
+
+    aid = poses(k).ActorID;
+    truthClassArr(k) = classOf(aid);
+
+    cIdx = double(truthClassArr(k)) + 1;
+    val.classPresent(cIdx) = val.classPresent(cIdx) + 1;
+
+    rb = localRangeBin(rng_(k));
+    val.rangeBinTotal(rb) = val.rangeBinTotal(rb) + 1;
+
+    ab = localAzBin(az_(k));
+    val.azBinTotal(ab) = val.azBinTotal(ab) + 1;
+
+    if isKey(val.actorPresent, aid)
+        val.actorPresent(aid) = val.actorPresent(aid) + 1;
+    else
+        val.actorPresent(aid) = 1;
+    end
+    if ~isKey(val.actorTracked, aid)
+        val.actorTracked(aid) = 0;
+    end
+end
+
 if n == 0 || nTruth == 0
     val.falseTracks(end+1)   = n;
     val.missedObjects(end+1) = nTruth;
+    for k = 1:nTruth
+        val = localLogMiss(val, truthClassArr(k), rng_(k), az_(k), t);
+    end
     return
-end
-
-tp = zeros(nTruth, 2);
-for k = 1:nTruth
-    tp(k,:) = poses(k).Position(1:2);
 end
 
 cost = zeros(n, nTruth);
@@ -171,7 +276,7 @@ while true
     matchedTrack(i) = true;
     matchedTruth(k) = true;
 
-    truthClass = classOf(poses(k).ActorID);
+    truthClass = truthClassArr(k);
     isOK = double(trackArray(i).class == truthClass);
 
     val.posErr(end+1)  = dmin;
@@ -185,6 +290,57 @@ end
 
 val.falseTracks(end+1)   = sum(~matchedTrack);
 val.missedObjects(end+1) = sum(~matchedTruth);
+
+for k = 1:nTruth
+    aid = poses(k).ActorID;
+    if matchedTruth(k)
+        val.classMatched(double(truthClassArr(k))+1) = val.classMatched(double(truthClassArr(k))+1) + 1;
+        val.actorTracked(aid) = val.actorTracked(aid) + 1;
+    else
+        val = localLogMiss(val, truthClassArr(k), rng_(k), az_(k), t);
+    end
+end
+end
+
+% ========================================================================
+function val = localLogMiss(val, cls, rangeVal, azVal, t)
+%LOCALLOGMISS  Record one missed-truth event and bucket it for the summary.
+val.missClass(end+1)   = double(cls);
+val.missRange(end+1)   = rangeVal;
+val.missAzimuth(end+1) = azVal;
+val.missTime(end+1)    = t;
+
+cIdx = double(cls) + 1;
+val.classMissed(cIdx) = val.classMissed(cIdx) + 1;
+
+rb = localRangeBin(rangeVal);
+val.rangeBinMiss(rb) = val.rangeBinMiss(rb) + 1;
+
+ab = localAzBin(azVal);
+val.azBinMiss(ab) = val.azBinMiss(ab) + 1;
+end
+
+% ========================================================================
+function b = localRangeBin(r)
+%LOCALRANGEBIN  10 m bins from 0-100 m, plus an overflow bin for >100 m.
+if r >= 100
+    b = 11;
+else
+    b = max(1, min(10, floor(r/10) + 1));
+end
+end
+
+% ========================================================================
+function b = localAzBin(az)
+%LOCALAZBIN  |az|<=20 deg -> 1, 20-30 deg -> 2, >30 deg -> 3.
+a = abs(az);
+if a <= 20
+    b = 1;
+elseif a <= 30
+    b = 2;
+else
+    b = 3;
+end
 end
 
 % ========================================================================
