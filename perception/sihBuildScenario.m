@@ -54,7 +54,7 @@ classOf(a.ActorID) = AgentClass.AutoRickshaw;
 
 % ---------------- 4. Pushcart at the road edge ----------------
 a = actor(scenario, 'ClassID', sihScenarioClassID(AgentClass.PushCart), 'Name','PushCart', ...
-    'Length',1.5,'Width',0.9,'Height',1.1,'Position',[70 -3.2 0]);
+    'Length',1.6,'Width',0.9,'Height',1.1,'Position',[70 -3.2 0]);
 smoothTrajectory(a, [70 -3.2 0; 84 -3.3 0], 1.1);
 classOf(a.ActorID) = AgentClass.PushCart;
 
