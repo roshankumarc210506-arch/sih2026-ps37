@@ -115,7 +115,7 @@ function build_driving_mode_stateflow()
     tToCruise = Stateflow.Transition(chart);
     tToCruise.Source = sCautious;
     tToCruise.Destination = sCruise;
-    tToCruise.LabelString = '[agent_density < 1.5]';   % PLACEHOLDER threshold
+    tToCruise.LabelString = '[after(0.5,sec) && agent_density < 1.5]';   % PLACEHOLDER threshold
     tToCruise.SourceOClock = 9;
     tToCruise.DestinationOClock = 3;
 
@@ -137,7 +137,7 @@ function build_driving_mode_stateflow()
     tYieldToCautious = Stateflow.Transition(chart);
     tYieldToCautious.Source = sYield;
     tYieldToCautious.Destination = sCautious;
-    tYieldToCautious.LabelString = '[~risk_zone_high_risk_agent]';
+    tYieldToCautious.LabelString = '[after(0.5,sec) && ~risk_zone_high_risk_agent]';
     tYieldToCautious.SourceOClock = 12;
     tYieldToCautious.DestinationOClock = 6;
 
