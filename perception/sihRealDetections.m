@@ -1,0 +1,164 @@
+function dets = sihRealDetections(visionSensor, radarSensor, poses, time, cfg, classOf)
+%SIHREALDETECTIONS  Day 2 detections: real camera + radar, stub LiDAR.
+%
+%   dets = sihRealDetections(visionSensor, radarSensor, poses, time, cfg, classOf)
+%
+%   Same output contract as Day 1's sihDummyDetections: a cell array of
+%   objectDetection with SensorIndex set (1/2/3), ready for the tracker
+%   exactly as before. Nothing downstream — tracker, class voter,
+%   contract conversion, validation — needs to change.
+%
+%   CLASS HANDLING — a deliberate choice, not an oversight:
+%   visionDetectionGenerator/drivingRadarDataGenerator report class from
+%   ActorProfiles, which only carries MATLAB's own restricted vocabulary
+%   (via the sihScenarioClassID mapping from Day 1's ClassID fix), and
+%   they don't model semantic misclassification — only geometric
+%   detection effects (range, occlusion, noise). Rather than reverse-
+%   translating their passthrough ClassID through that lossy mapping, we
+%   keep applying OUR OWN class-confusion model (cfg.Sensor(s).ClassAcc +
+%   cfg.ConfusionPairs) on top of the real geometric output, same as the
+%   Day 1 stub. Keeps the one part we actually want to tune — how often
+%   a camera mistakes a pushcart for an animal — under our own control.
+%
+%   ACTORID RECOVERY — flagged for verification on first run:
+%   to look up classOf(ActorID) per detection we need to know which input
+%   target it came from. Expected field: dets{k}.ObjectAttributes{1}.TargetIndex
+%   (index into `poses`), giving poses(TargetIndex).ActorID. If this
+%   throws or returns nonsense, PRINT dets{1} IN FULL and fix the field
+%   name in sihRecoverActorID below — inspect, don't guess a second time.
+
+dets = {};
+
+% ---------------- Camera (real) ----------------
+[visDets, numVis] = visionSensor(poses, time);
+for k = 1:numVis
+    d = visDets{k};
+    actorID = sihRecoverActorID(d, poses);
+    d = sihApplyClassConfusion(d, actorID, classOf, cfg, 1);
+    dets{end+1} = d; %#ok<AGROW>
+end
+
+% ---------------- Radar (real) ----------------
+[radDets, numRad] = radarSensor(poses, time);
+for k = 1:numRad
+    d = radDets{k};
+    actorID = sihRecoverActorID(d, poses);
+    d = sihApplyClassConfusion(d, actorID, classOf, cfg, 2);
+    dets{end+1} = d; %#ok<AGROW>
+end
+
+% ---------------- LiDAR (still stub — Day 3 swap pending) ----------------
+lidarDets = sihStubLidarDetections(poses, time, cfg, classOf);
+dets = [dets(:); lidarDets(:)];   % both grow as 1xN row cells via {end+1}=...; force columns so vertcat doesn't require equal row-lengths
+
+dets = dets(:);
+end
+
+% ------------------------------------------------------------------------
+function actorID = sihRecoverActorID(det, poses)
+%SIHRECOVERACTORID  Trace a generated detection back to its source actor.
+%   TargetIndex is the actor's real ActorID (checked directly against
+%   MATLAB's docs: visionDetectionGenerator/drivingRadarDataGenerator
+%   report ObjectAttributes.TargetIndex as the ActorID from the
+%   Profiles/ActorProfiles struct passed at construction, NOT a position
+%   in `poses`). poses excludes ego and is repositioned starting at 1, so
+%   poses(idx) silently returns the WRONG actor for every idx that happens
+%   to still be in-bounds (only out-of-range idx values, like ego-excluded
+%   gaps or the -1 false-alarm sentinel, used to throw). Match by ActorID
+%   value instead of treating TargetIndex as a position.
+try
+    idx     = det.ObjectAttributes{1}.TargetIndex;
+    match   = find([poses.ActorID] == idx, 1);
+    actorID = poses(match).ActorID;   % errors (caught below) if match is empty
+catch
+    % No poses entry has this ActorID: either a real false alarm
+    % (TargetIndex == -1, MATLAB's own "no source actor" sentinel) or an
+    % actor not currently in `poses`. Surface it loudly rather than
+    % silently misclassifying every single detection.
+    actorID = -1;
+    warning('sihRealDetections:actorIDRecoveryFailed', ...
+        ['Could not recover source ActorID from a real detection. ' ...
+         'Inspect dets{1}.ObjectAttributes structure and fix ' ...
+         'sihRecoverActorID to match the real field name.']);
+end
+end
+
+% ------------------------------------------------------------------------
+function d = sihApplyClassConfusion(d, actorID, classOf, cfg, sensorIdx)
+if actorID > 0 && isKey(classOf, actorID)
+    trueClass = classOf(actorID);
+    if rand < cfg.Sensor(sensorIdx).ClassAcc
+        reported = trueClass;
+    else
+        reported = sihConfuseClassPublic(trueClass, cfg);
+    end
+else
+    reported = AgentClass.Unknown;   % false alarm / unmatched
+end
+d.ObjectClassID    = double(reported);
+d.ObjectAttributes = {struct('TruthActorID', actorID, ...
+                              'TruthClass',   double(reported), ...
+                              'SensorName',   cfg.Sensor(sensorIdx).Name)};
+end
+
+% ------------------------------------------------------------------------
+function c = sihConfuseClassPublic(trueClass, cfg)
+c = AgentClass.Unknown;
+for i = 1:size(cfg.ConfusionPairs,1)
+    if cfg.ConfusionPairs{i,1} == trueClass
+        opts = cfg.ConfusionPairs{i,2};
+        c    = opts(randi(numel(opts)));
+        return
+    end
+end
+end
+
+% ------------------------------------------------------------------------
+function dets = sihStubLidarDetections(poses, time, cfg, classOf)
+%SIHSTUBLIDARDETECTIONS  Unchanged Day-1 statistical LiDAR, carried over.
+%   Replace with lidarPointCloudGenerator + clustering on Day 3.
+dets = {};
+S = cfg.Sensor(3);
+
+for k = 1:numel(poses)
+    p  = poses(k).Position;
+    r  = hypot(p(1), p(2));
+    az = atan2d(p(2), p(1));
+    if r > S.MaxRange || abs(az) > S.FoV/2, continue; end
+
+    pd = S.Pd * max(0.35, 1 - 0.5*(r/S.MaxRange)^2);
+    if rand > pd, continue; end
+
+    meas = [p(1) + S.PosStd(1)*randn
+            p(2) + S.PosStd(2)*randn
+            0];
+    R = diag([S.PosStd(1)^2, S.PosStd(2)^2, cfg.MeasZNoise]);
+
+    trueClass = classOf(poses(k).ActorID);
+    if rand < S.ClassAcc
+        reported = trueClass;
+    else
+        reported = sihConfuseClassPublic(trueClass, cfg);
+    end
+
+    dets{end+1} = objectDetection(time, meas, ...          %#ok<AGROW>
+        'MeasurementNoise', R, 'SensorIndex', 3, ...
+        'ObjectClassID',    double(reported), ...
+        'ObjectAttributes', {struct('TruthActorID', poses(k).ActorID, ...
+                                     'TruthClass', double(trueClass), ...
+                                     'SensorName', S.Name)});
+end
+
+if rand < S.FalseAlarmRate
+    rr = 5 + (S.MaxRange-5)*rand;
+    aa = deg2rad((rand-0.5)*min(S.FoV,180));
+    meas = [rr*cos(aa); rr*sin(aa); 0];
+    R = diag([S.PosStd(1)^2, S.PosStd(2)^2, cfg.MeasZNoise]);
+    dets{end+1} = objectDetection(time, meas, ...
+        'MeasurementNoise', R, 'SensorIndex', 3, ...
+        'ObjectClassID',    double(AgentClass.Unknown), ...
+        'ObjectAttributes', {struct('TruthActorID', -1, ...
+                                     'TruthClass', double(AgentClass.Unknown), ...
+                                     'SensorName', S.Name)});
+end
+end
