@@ -111,15 +111,16 @@ assignin('base', 'SihPerceptionBus', perceptionBus);
 
 % ---------------- Ego pose bus (side channel) ----------------
 g = Simulink.BusElement.empty;
-names = {'x','y','yaw','velocity'};
-units = {'m','m','rad','m/s'};
-for k = 1:4
+names = {'x','y','yaw','velocity','Timestamp'};
+units = {'m','m','rad','m/s','s'};
+for k = 1:5
     g(k)            = Simulink.BusElement;
     g(k).Name       = names{k};
     g(k).DataType   = 'double';
     g(k).Dimensions = 1;
     g(k).Unit       = units{k};
 end
+g(5).Description = 'Simulation time, not wall-clock -- same concern already raised to M3 about navClock.';
 egoBus = Simulink.Bus;
 egoBus.Elements    = g;
 egoBus.Description = 'Ego pose in WORLD frame (for ego<->world transforms)';
