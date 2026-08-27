@@ -26,6 +26,19 @@ function dets = sihRealDetections(visionSensor, radarSensor, poses, time, cfg, c
 %   (index into `poses`), giving poses(TargetIndex).ActorID. If this
 %   throws or returns nonsense, PRINT dets{1} IN FULL and fix the field
 %   name in sihRecoverActorID below — inspect, don't guess a second time.
+%
+%   KNOWN BEHAVIOR (verified Day 2, not a bug): real vision/radar report
+%   detections from an object's near visible surface, not its centroid.
+%   Offset scales with object size — confirmed via 3 lines of evidence:
+%   (1) MathWorks' own radar tutorial documents the same effect for
+%       extended targets, (2) delta direction tracks each target's
+%       individual bearing to ego across a 24 deg spread rather than
+%       staying fixed (rules out a mounting-offset frame bug),
+%       (3) delta magnitude scales with object length (3.5m on a 4.5m
+%       car vs 0.4-1.2m on smaller actors).
+%   This is why Day 2's ROI RMSE (0.26m) is HIGHER than Day 1's stub
+%   (0.18m) — Day 2 is more physically honest, not worse. Flagged to
+%   M3 since it affects costmap safety-margin inflation for large actors.
 
 dets = {};
 
