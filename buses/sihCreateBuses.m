@@ -21,7 +21,15 @@ function [trackBus, perceptionBus, egoBus] = sihCreateBuses(cfg)
 %     * `class` is an enum, not a string (see AgentClass.m).
 %     * `timestamp` lets M3 compute data age at the costmap boundary.
 
-if nargin < 1, cfg = sihConfig(); end
+if nargin < 1 || isempty(cfg) || ~isfield(cfg,'MaxTracks')
+    cfg.MaxTracks = 20;   % matches sihConfig.m's current default.
+    % Deliberately NOT calling sihConfig() here — this file lives in
+    % buses/ and must not depend on path resolution picking the
+    % right sihConfig.m when more than one exists on the MATLAB
+    % path (confirmed today: perception/ and Prediction/ both have
+    % one). MaxTracks is the only field this function needs; keep
+    % it local rather than reaching out.
+end
 
 % ---------------- Per-track bus ----------------
 e = Simulink.BusElement.empty;
