@@ -26,8 +26,11 @@ function scenario = buildCattleCrossingScenario()
     animal = actor(scenario, 'ClassID', 4, 'Length', 1.8, 'Width', 0.6, ...
         'Height', 1.3, 'Position', [75 8 0], 'Name', 'Cattle1');
 
-    animalWaypoints = [75 8 0; 75 7 0; 75 -7 0; 75 -8 0];
-    animalTimes = [0 5.0 7.5 8.0];   % holds off-road until t=5s, darts across
+   animalWaypoints = [75 8 0; 75 7 0; 77 2 0; 73 -1 0; 75 -7 0; 75 -8 0];
+   animalTimes = [0 5.0 5.8 6.6 7.5 8.0];   % holds off-road, then darts across
+   % with a startled zigzag (forward dart, then jerk back) right as it
+   % crosses the lane -- was a straight perpendicular line before, which
+   % looked too smooth/predictable for "sudden erratic animal" behavior.
     trajectory(animal, animalWaypoints, animalTimes);
     % NOTE: uses the (waypoints, times) trajectory() form so the
     % "hold, then dart" timing is explicit rather than inferred from a
