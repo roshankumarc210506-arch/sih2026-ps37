@@ -35,7 +35,7 @@ time = zeros(N,1);
 busVals(N,1) = struct('tracks', log(1).tracks, ...
                       'num_tracks', uint32(0), ...
                       'timestamp', 0);
-egoVals(N,1) = struct('x',0,'y',0,'yaw',0,'velocity',0);
+egoVals(N,1) = struct('x',0,'y',0,'yaw',0,'velocity',0,'Timestamp',0);
 
 for k = 1:N
     time(k)       = log(k).time;
