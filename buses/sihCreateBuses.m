@@ -22,7 +22,7 @@ function [trackBus, perceptionBus, egoBus] = sihCreateBuses(cfg)
 %     * `timestamp` lets M3 compute data age at the costmap boundary.
 
 if nargin < 1 || isempty(cfg) || ~isfield(cfg,'MaxTracks')
-    cfg.MaxTracks = 20;   % matches sihConfig.m's current default.
+    cfg.MaxTracks = 40;   % matches sihConfig.m's current default.
     % Deliberately NOT calling sihConfig() here — this file lives in
     % buses/ and must not depend on path resolution picking the
     % right sihConfig.m when more than one exists on the MATLAB
