@@ -9,7 +9,20 @@ cfg.SampleTime = 0.1;      % s   (10 Hz perception update)
 cfg.StopTime   = 25;       % s
 
 % ---------- Bus sizing (Simulink needs FIXED sizes) ----------
-cfg.MaxTracks  = 20;       % fixed-length track array in the bus
+cfg.MaxTracks  = 40;       % fixed-length track array in the bus. Generous
+                           % headroom, not a tight fit -- DenseMarket has
+                           % 10 real actors and even moderate yield puts
+                           % real demand well above the old 20. Data-loss
+                           % fix, not metric-tuning: 222/248 frames were
+                           % silently failing to initiate new tracks,
+                           % meaning we didn't know whether real objects
+                           % were being dropped some of those frames.
+                           % FLAG: buses/sihDefineBuses.m (M6) and
+                           % Prediction/*.m (M2) independently hardcode
+                           % MAX_TRACKS=20 to "mirror" this value -- they
+                           % will now be out of sync until updated there
+                           % too. Not this file's job to fix; raise with
+                           % M2/M6.
 cfg.NumClasses = 7;        % Unknown + 6 real classes
 
 % ---------- Frame convention ----------
