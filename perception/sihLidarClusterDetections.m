@@ -57,6 +57,12 @@ minDistance = 0.6;   % m, TUNABLE — see header note (3)
 labels = reshape(pcsegdist(ptCloud, minDistance), [], 1);
 
 minPoints = 5;       % clusters smaller than this are treated as noise
+maxPoints = 200;      % clusters larger than this are treated as ground/
+                       % background, not an actor -- confirmed empirically:
+                       % every frame in a 248-frame run had a ~9822-point
+                       % static ground-plane cluster (150x+ larger than any
+                       % real actor cluster, max observed 55), passing
+                       % through as a phantom detection every single frame.
 uniqueLabels = unique(labels(labels > 0));
 
 % Ground truth positions, for nearest-actor attribution (class-confusion
@@ -69,7 +75,7 @@ end
 
 for L = uniqueLabels(:)'
     mask = (labels == L);
-    if nnz(mask) < minPoints
+    if nnz(mask) < minPoints || nnz(mask) > maxPoints
         continue
     end
 
