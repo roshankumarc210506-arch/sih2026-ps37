@@ -35,6 +35,8 @@ cfg.Foot.CircleOffsets_m = [-0.1167, 1.4500, 3.0167];     % along heading, from 
 cfg.Map.Resolution_cpm   = 4;       % cells per metre -> 0.25 m cells
 cfg.Map.Width_m          = 60;
 cfg.Map.Height_m         = 40;
+cfg.Map.DefaultStart = [4, 22, 0];
+cfg.Map.DefaultGoal  = [56, 12, 0];
 
 %% ===================== PER-CLASS RISK INFLATION =====================
 % Extra inflation ON TOP of the ego footprint radius, per obstacle class.
@@ -43,6 +45,7 @@ cfg.Risk.static_m        = 0.00;    % walls, kerbs, parked structures
 cfg.Risk.vehicle_m       = 0.30;    % cars, autos, trucks
 cfg.Risk.pedestrian_m    = 0.75;    % people
 cfg.Risk.animal_m        = 0.90;    % cattle, dogs - least predictable
+cfg.Risk.unknown_m = cfg.Risk.animal_m;   % unclassified = assume the most cautious case   % unclassified = assume the most cautious case
 
 %% ===================== PLANNER =====================
 cfg.Plan.MinTurningRadius_m       = 4.10;   % 1.15 x (2.5/tan(35deg)) = 1.15 x 3.57
