@@ -75,15 +75,6 @@ end
 dets = dets(:);
 end
 
-% ------------------------------------------------------------------------
-function c = sihConfuseClass(trueClass, cfg)
-%SIHCONFUSECLASS  Pick a plausible wrong label instead of a uniform-random one.
-c = AgentClass.Unknown;
-for i = 1:size(cfg.ConfusionPairs,1)
-    if cfg.ConfusionPairs{i,1} == trueClass
-        opts = cfg.ConfusionPairs{i,2};
-        c    = opts(randi(numel(opts)));
-        return
-    end
-end
-end
+% sihConfuseClass moved to its own shared file (perception/sihConfuseClass.m)
+% -- was duplicated identically here and in sihRealDetections.m; LiDAR
+% clustering needed it too, making three call sites, worth one definition.

@@ -1,7 +1,7 @@
-function dets = sihRealDetections(visionSensor, radarSensor, poses, time, cfg, classOf)
-%SIHREALDETECTIONS  Day 2 detections: real camera + radar, stub LiDAR.
+function dets = sihRealDetections(visionSensor, radarSensor, lidarSensor, egoVehicle, poses, time, cfg, classOf)
+%SIHREALDETECTIONS  Day 3 detections: real camera + radar + LiDAR.
 %
-%   dets = sihRealDetections(visionSensor, radarSensor, poses, time, cfg, classOf)
+%   dets = sihRealDetections(visionSensor, radarSensor, lidarSensor, egoVehicle, poses, time, cfg, classOf)
 %
 %   Same output contract as Day 1's sihDummyDetections: a cell array of
 %   objectDetection with SensorIndex set (1/2/3), ready for the tracker
@@ -60,9 +60,9 @@ for k = 1:numRad
     dets{end+1} = d; %#ok<AGROW>
 end
 
-% ---------------- LiDAR (still stub — Day 3 swap pending) ----------------
-lidarDets = sihStubLidarDetections(poses, time, cfg, classOf);
-dets = [dets(:); lidarDets(:)];   % both grow as 1xN row cells via {end+1}=...; force columns so vertcat doesn't require equal row-lengths
+% ---------------- LiDAR (real, Day 3) ----------------
+lidarDets = sihLidarClusterDetections(lidarSensor, egoVehicle, poses, time, cfg, classOf);
+dets = [dets(:); lidarDets(:)];   % dets grows as a 1xN row cell via {end+1}=...; force columns so vertcat doesn't require equal row-lengths
 
 dets = dets(:);
 end
@@ -103,7 +103,7 @@ if actorID > 0 && isKey(classOf, actorID)
     if rand < cfg.Sensor(sensorIdx).ClassAcc
         reported = trueClass;
     else
-        reported = sihConfuseClassPublic(trueClass, cfg);
+        reported = sihConfuseClass(trueClass, cfg);
     end
 else
     reported = AgentClass.Unknown;   % false alarm / unmatched
@@ -114,64 +114,10 @@ d.ObjectAttributes = {struct('TruthActorID', actorID, ...
                               'SensorName',   cfg.Sensor(sensorIdx).Name)};
 end
 
-% ------------------------------------------------------------------------
-function c = sihConfuseClassPublic(trueClass, cfg)
-c = AgentClass.Unknown;
-for i = 1:size(cfg.ConfusionPairs,1)
-    if cfg.ConfusionPairs{i,1} == trueClass
-        opts = cfg.ConfusionPairs{i,2};
-        c    = opts(randi(numel(opts)));
-        return
-    end
-end
-end
+% sihConfuseClassPublic moved to its own shared file (perception/sihConfuseClass.m)
+% -- was duplicated identically here and in sihDummyDetections.m; LiDAR
+% clustering needed it too, making three call sites, worth one definition.
 
-% ------------------------------------------------------------------------
-function dets = sihStubLidarDetections(poses, time, cfg, classOf)
-%SIHSTUBLIDARDETECTIONS  Unchanged Day-1 statistical LiDAR, carried over.
-%   Replace with lidarPointCloudGenerator + clustering on Day 3.
-dets = {};
-S = cfg.Sensor(3);
-
-for k = 1:numel(poses)
-    p  = poses(k).Position;
-    r  = hypot(p(1), p(2));
-    az = atan2d(p(2), p(1));
-    if r > S.MaxRange || abs(az) > S.FoV/2, continue; end
-
-    pd = S.Pd * max(0.35, 1 - 0.5*(r/S.MaxRange)^2);
-    if rand > pd, continue; end
-
-    meas = [p(1) + S.PosStd(1)*randn
-            p(2) + S.PosStd(2)*randn
-            0];
-    R = diag([S.PosStd(1)^2, S.PosStd(2)^2, cfg.MeasZNoise]);
-
-    trueClass = classOf(poses(k).ActorID);
-    if rand < S.ClassAcc
-        reported = trueClass;
-    else
-        reported = sihConfuseClassPublic(trueClass, cfg);
-    end
-
-    dets{end+1} = objectDetection(time, meas, ...          %#ok<AGROW>
-        'MeasurementNoise', R, 'SensorIndex', 3, ...
-        'ObjectClassID',    double(reported), ...
-        'ObjectAttributes', {struct('TruthActorID', poses(k).ActorID, ...
-                                     'TruthClass', double(trueClass), ...
-                                     'SensorName', S.Name)});
-end
-
-if rand < S.FalseAlarmRate
-    rr = 5 + (S.MaxRange-5)*rand;
-    aa = deg2rad((rand-0.5)*min(S.FoV,180));
-    meas = [rr*cos(aa); rr*sin(aa); 0];
-    R = diag([S.PosStd(1)^2, S.PosStd(2)^2, cfg.MeasZNoise]);
-    dets{end+1} = objectDetection(time, meas, ...
-        'MeasurementNoise', R, 'SensorIndex', 3, ...
-        'ObjectClassID',    double(AgentClass.Unknown), ...
-        'ObjectAttributes', {struct('TruthActorID', -1, ...
-                                     'TruthClass', double(AgentClass.Unknown), ...
-                                     'SensorName', S.Name)});
-end
-end
+% sihStubLidarDetections deleted Day 3 -- superseded by real LiDAR
+% (sihCreateLidar + sihLidarClusterDetections). Confirmed no remaining
+% call sites (grep across perception/ and buses/) before removing it.
