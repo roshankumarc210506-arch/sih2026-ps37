@@ -31,6 +31,9 @@ sihCreateBuses(cfg);
 [tracker, trackerName]          = sihCreateTracker(cfg);
 sihClassVoter('reset');
 
+[visionSensor, radarSensor] = sihCreateRealSensors(scenario, egoVehicle, cfg);
+lidarSensor = sihCreateLidar(scenario, egoVehicle, cfg);
+
 % ---- actor names, for the per-actor diagnostic table (diagnostics only) ----
 nameMap = containers.Map('KeyType','double','ValueType','char');
 for kA = 1:numel(scenario.Actors)
@@ -64,7 +67,7 @@ while advance(scenario)
     t     = scenario.SimulationTime;
     poses = targetPoses(egoVehicle);            % ego-frame ground truth
 
-    dets = sihDummyDetections(poses, t, cfg, classOf);
+    dets = sihRealDetections(visionSensor, radarSensor, lidarSensor, egoVehicle, poses, t, cfg, classOf);
 
     if isempty(dets)
         tracks = predictTracksToTime(tracker, 'confirmed', t);
@@ -92,7 +95,8 @@ while advance(scenario)
     ep = egoVehicle.Position;
     ego = struct('x', ep(1), 'y', ep(2), ...
                  'yaw', deg2rad(egoVehicle.Yaw), ...
-                 'velocity', norm(egoVehicle.Velocity(1:2)));
+                 'velocity', norm(egoVehicle.Velocity(1:2)), ...
+                 'Timestamp', t);
 
     log(end+1) = struct('time', t, 'tracks', trackArray, ...
                         'num_tracks', n, 'ego', ego);          %#ok<AGROW>

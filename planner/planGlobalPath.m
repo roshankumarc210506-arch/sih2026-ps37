@@ -1,4 +1,4 @@
-   function planResult = planGlobalPath(omap, cfg, mapInfo, startPose, goalPose)
+function planResult = planGlobalPath(omap, cfg, mapInfo, startPose, goalPose)
 %PLANGLOBALPATH  Hybrid A* over SE(2) with Reeds-Shepp analytic expansion.
 %
 %   Returns geometry only: [x y theta] + directions. No velocity, no
@@ -20,13 +20,16 @@ sv.ValidationDistance = cfg.Plan.ValidationDistance_m;
 
 %% ---------- endpoint guards ----------
 % Fail loudly here rather than inside the search.
+failReason = '';
 if ~isStateValid(sv, startPose)
-    error('planGlobalPath:BadStart', ...
-        'Start [%.2f %.2f %.2f] is invalid (occupied or out of bounds).', startPose);
+    failReason = 'BadStart';
+elseif ~isStateValid(sv, goalPose)
+    failReason = 'BadGoal';
 end
-if ~isStateValid(sv, goalPose)
-    error('planGlobalPath:BadGoal', ...
-        'Goal [%.2f %.2f %.2f] is invalid (occupied or out of bounds).', goalPose);
+
+if ~isempty(failReason)
+    planResult = emptyPlanResult(mapInfo, startPose, goalPose, tPlanStart, failReason);
+    return;
 end
 
 %% ---------- planner ----------
@@ -65,6 +68,21 @@ tPlanEnd = navClock();
 %% ---------- extract ----------
 states = pathObj.States;              % N x 3
 N = size(states,1);
+
+% Soft-fail for a genuine search failure: start/goal were both valid
+% (passed the isStateValid guards above), but plannerHybridAStar still
+% couldn't find any route between them (e.g. real inflated obstacles
+% genuinely block the corridor). Distinct from the BadStart/BadGoal guard
+% above - this covers "valid endpoints, no path exists between them."
+% Confirmed via dbstop: this is exactly the N=0, solnInfo.IsPathFound=0
+% case, not a malformed-input case - so it gets the same soft-fail
+% treatment as Track A rather than being allowed to crash on dGeom(N-1)
+% with N<2.
+if N < 2
+    planResult = emptyPlanResult(mapInfo, startPose, goalPose, tPlanStart, 'SearchFailed');
+    return;
+end
+
 directions = directions(:);
 
 % Toolbox may return one direction per transition (N-1). Normalise to N.
@@ -111,4 +129,31 @@ seg  = vecnorm(diff(states(:,1:2)), 2, 2);
    planResult.SolutionInfo         = solnInfo;
    planResult.StartPose            = startPose;
    planResult.GoalPose             = goalPose;
+   planResult.FailureReason          = failReason;
+   end
+   function planResult = emptyPlanResult(mapInfo, startPose, goalPose, tPlanStart, failReason)
+   %EMPTYPLANRESULT  Same field set as a successful plan, zeroed/empty, plus
+   %   IsPathFound=false and a reason string. Lets every downstream consumer
+   %   (assignVelocityProfile, packPlanBus, your own scripts) read fields
+   %   without special-casing a crash - they just see zero waypoints.
+   tNow = navClock();
+   planResult = struct();
+   planResult.States               = zeros(0,3);
+   planResult.Directions            = zeros(0,1);
+   planResult.NumWaypoints          = 0;
+   planResult.CuspIndices           = zeros(0,1);
+   planResult.NumDirectionSwitches  = 0;
+   planResult.PathLength_m          = 0;
+   planResult.ReverseLength_m       = 0;
+   planResult.PlanningTime_s        = tNow - tPlanStart;
+   planResult.GenerationTimestamp   = tNow;
+   planResult.MapTimestamp          = mapInfo.Timestamp_s;
+   planResult.MapAgeAtPlan_s        = tNow - mapInfo.Timestamp_s;
+   planResult.SearchModeUsed        = "none";
+   planResult.DirectionDisagreements = 0;
+   planResult.IsPathFound            = false;
+   planResult.SolutionInfo           = struct();
+   planResult.StartPose              = startPose;
+   planResult.GoalPose               = goalPose;
+   planResult.FailureReason          = failReason;
    end

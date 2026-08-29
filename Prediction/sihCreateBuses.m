@@ -21,15 +21,7 @@ function [trackBus, perceptionBus, egoBus] = sihCreateBuses(cfg)
 %     * `class` is an enum, not a string (see AgentClass.m).
 %     * `timestamp` lets M3 compute data age at the costmap boundary.
 
-if nargin < 1 || isempty(cfg) || ~isfield(cfg,'MaxTracks')
-    cfg.MaxTracks = 40;   % matches sihConfig.m's current default.
-    % Deliberately NOT calling sihConfig() here — this file lives in
-    % buses/ and must not depend on path resolution picking the
-    % right sihConfig.m when more than one exists on the MATLAB
-    % path (confirmed today: perception/ and Prediction/ both have
-    % one). MaxTracks is the only field this function needs; keep
-    % it local rather than reaching out.
-end
+if nargin < 1, cfg = sihConfig(); end
 
 % ---------------- Per-track bus ----------------
 e = Simulink.BusElement.empty;
@@ -119,16 +111,15 @@ assignin('base', 'SihPerceptionBus', perceptionBus);
 
 % ---------------- Ego pose bus (side channel) ----------------
 g = Simulink.BusElement.empty;
-names = {'x','y','yaw','velocity','Timestamp'};
-units = {'m','m','rad','m/s','s'};
-for k = 1:5
+names = {'x','y','yaw','velocity'};
+units = {'m','m','rad','m/s'};
+for k = 1:4
     g(k)            = Simulink.BusElement;
     g(k).Name       = names{k};
     g(k).DataType   = 'double';
     g(k).Dimensions = 1;
     g(k).Unit       = units{k};
 end
-g(5).Description = 'Simulation time, not wall-clock -- same concern already raised to M3 about navClock.';
 egoBus = Simulink.Bus;
 egoBus.Elements    = g;
 egoBus.Description = 'Ego pose in WORLD frame (for ego<->world transforms)';

@@ -17,9 +17,15 @@ function scenario = buildUrbanIntersectionScenario()
         'Name', 'NS_Road');
     road(scenario, roadCentersEW, 'Lanes', lanespec(2, 'Width', 3.25), ...
         'Name', 'EW_Road');
-    % TODO (M5, manual in DSD GUI): tighten/round the corner geometry so
-    % the intersection footprint is consistent with MinTurningRadius =
-    % 4.10 m for ego turning movements.
+   % RESOLVED (M5, Day 2): left as an open, curb-free junction rather
+   % than adding curb-return geometry -- road() doesn't support proper
+   % rounded corners where two roads cross, and with no curbs at all,
+   % there's nothing in the crossing for a turning vehicle to hit, so
+   % the MinTurningRadius = 4.10 m constraint is trivially satisfied.
+   % Matches the "no traffic signals, informal" theme anyway. Added a
+   % stationary Car actor near the EW_Road east-arm shoulder to
+   % represent illegal roadside parking/encroachment (see Actors in
+   % urbanIntersection_M5.mat).
 
     egoCar = addEgoVehicle(scenario, [50 -50 0], 90);
     egoWaypoints = [50 -50 0; 50 20 0; 50 40 0; 50 150 0];
