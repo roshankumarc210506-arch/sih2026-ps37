@@ -21,9 +21,20 @@ function sihDefineBuses()
     sihCreateBuses();
 
     %% ---- Prediction bus (M2 owner) ----
-    % Fixed horizon N steps, fixed max agent count to match SihTrackBus (20)
-    N_HORIZON = 20;      % prediction steps, tune later
-    MAX_TRACKS = 20;     % must match M1's fixed track array length
+    % OPEN CONFLICT as of Day 1-2: M2 has their own createPredictionBusObjects.m
+    % in Prediction/ that defines SihPredictionBus with a DIFFERENT SHAPE --
+    % theirs is a single per-agent struct (id, valid, predicted_positions,
+    % uncertainty_radius, N=10 horizon), mine below is a top-level array
+    % wrapper (agents[40], num_agents, timestamp). These are NOT compatible.
+    % DO NOT swap this block for a call to M2's script until M2 confirms
+    % which shape is actually correct -- question sent, awaiting reply.
+    % MAX_TRACKS below updated to 40 to match M1's real sihConfig.m fix
+    % (was 20, caused 222/248 frames of silent track loss).
+    N_HORIZON = 20;      % prediction steps, tune later -- M2's script uses N=10, unreconciled
+    MAX_TRACKS = 40;     % matches M1's sihConfig.m MaxTracks=40 (raised
+                          % from 20 -- M1 found 222/248 frames were silently
+                          % failing to initiate new tracks at the old size,
+                          % a real data-loss bug, not just tuning)
 
     predAgent(1) = Simulink.BusElement;
     predAgent(1).Name = 'id';
@@ -110,7 +121,8 @@ function sihDefineBuses()
     assignin('base', 'SihDrivingModeBus', SihDrivingModeBus);
     clear mode
 
-    disp('sihDefineBuses: called sihCreateBuses() [M1] and createM4BusObjects() [M4], then created SihPredictionBus and SihDrivingModeBus [M6].');
+    disp('sihDefineBuses: called sihCreateBuses() [M1] and createM4BusObjects() [M4], then created SihPredictionBus (MAX_TRACKS=40, UNRECONCILED with M2) and SihDrivingModeBus [M6].');
     disp('Bus contract fully settled as of Day 1: SihPlanBus.Waypoints=5000 rows, Directions=double, confirmed by M3.');
+    disp('OPEN CONFLICT: SihPredictionBus shape differs from M2''s Prediction/createPredictionBusObjects.m -- do not treat as final.');
     disp('All bus objects now defined in base workspace via a single call: sihDefineBuses().');
 end
