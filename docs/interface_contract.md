@@ -24,30 +24,34 @@ Bus: `SihPerceptionBus` / `SihTrackBus` (defined in `buses/sihCreateBuses.m`)
 available), not `trackerJPDA`. ~2.43 false tracks/frame near ego. Weakest on closely-spaced crossing
 agents — expect this to show up in market/intersection scenarios.
 
+**Fixed Day 2 (real bug, verified):** `Prediction/sihCreateBuses.m`, `Prediction/AgentClass.m`,
+`Prediction/sihConfig.m` were stale duplicates silently SHADOWING the real `buses/sihCreateBuses.m`
+and `perception/sihConfig.m` on the MATLAB path — confirmed via `which -all sihCreateBuses`, which
+caused `MaxTracks` to silently resolve to 20 instead of 40 on any machine where `Prediction/` came
+first on the path. All three deleted. If you see `MaxTracks=20` unexpectedly, run `which -all
+sihCreateBuses` and check for shadowing before assuming it's a missing push.
+
 ## 2. Prediction → GlobalPlanner (M2 owner)
 
-Bus: `SihPredictionBus` — **STATUS: STILL BEING RECONCILED, do not wire against this yet.**
+Bus: `SihPredictionBus` — flat per-agent shape, array size set on the block's output **port**
+(Ports and Data Manager), NOT wrapped in a container bus. **Confirmed final Day 2** — M2 attempted
+a container-bus wrapper (agents[]/num_agents/timestamp) but hit a real codegen limitation:
+MATLAB Function blocks cannot construct a struct-array-valued field of a struct via any
+construction order. Reverted to the flat shape, which was M2's original working design.
 
-M2's real script (`Prediction/createPredictionBusObjects.m`) defines a bus-array pattern: the bus
-object itself is one agent's shape (`id`, `valid`, `predicted_positions[10x2]`,
-`uncertainty_radius[10x1]`), with the fixed-size array (matching M1's `MaxTracks`) set on the block's
-output **port** in Ports and Data Manager, not in the bus object file itself.
+- Per-agent fields: `id` (uint32), `valid` (boolean), `predicted_positions[N x 2]` (double),
+  `uncertainty_radius[N x 1]` (double).
+- **No count/valid-total field** — consumers must loop all array slots checking `.valid`.
+  Known inconsistency vs. the `num_tracks` convention elsewhere; planned follow-up post-Phase 1,
+  not a blocker.
+- **No batch timestamp** on this bus.
+- Horizon length: currently **N=20** (matches M6's original placeholder value, kept by M2 when
+  reverting the container-bus attempt) — **verify with M2 whether this is intentional or should be
+  N=10 (M2's originally-stated real/tuned value) before treating as final.**
 
-**Open questions:**
-- No count/valid-total signal — M2 confirmed this is a known gap, not yet added (no room on Day 2
-  push). Consumers must loop all slots checking `.valid`. Flagged as inconsistent with the
-  `num_tracks` convention used elsewhere — **planned follow-up after Phase 1**, not a blocker.
-- Batch timestamp — M2 confirmed adding this in the same push as the MaxTracks sync.
-- **M2's MaxTracks 20→40 sync described as done, but NOT YET VERIFIED on GitHub** — `git log` on
-  `Prediction/createPredictionBusObjects.m` as of last check still shows only the original Day 1
-  commit. **Do not wire against this bus until a fresh push is confirmed via `git log`, not just a
-  message.**
-- Horizon length N=10 explicitly NOT final — M2 expects to retune once M1's real Day 3 data lands.
-
-`buses/sihDefineBuses.m` currently still has an M6-authored placeholder `SihPredictionBus`
-(container-bus shape, structurally different from M2's real one) — **this needs deleting once M2's
-real push is verified**, replaced with a call to M2's `createPredictionBusObjects()`, same pattern
-used for M1 and M4.
+GlobalPlanner's prediction input port should be typed directly as `Bus: SihPredictedAgentBus` with a
+fixed array dimension (40, matching `SihTrackBus`'s `MaxTracks`) set on the port — same pattern M2
+uses on their output. No wrapper bus needed.
 
 ## 3. GlobalPlanner → Control (M3 owner)
 
@@ -64,52 +68,57 @@ duplicated elsewhere)
   monotonic clock**, NOT wall-clock. Do not compare against `posixtime`/`datetime`.
 - **CONFIRMED Day 1 (M3):** `MAX_WAYPOINTS = 5000` matches `cfg.Bus.MaxWaypoints` /
   `cfg.Plan.MaxNumPathStates` in `planner_config.m` — locked, both sides agree.
+- **NEW Day 2, CONFIRMED PUSHED (commit `59d1847`):** 8th field `PlannerInfeasible` (boolean) added.
+  Set by M3 from the internal `IsPathFound`/`FailureReason` when packing the bus. Consumed by M5's
+  Stateflow chart (verified: `PlannerInfeasible=true` correctly triggers `driving_mode=STOP`) via
+  `extractPlannerInfeasible.m`. **Behavior for Control still needs group sign-off** — see Section 6.
 
-**Footprint / collision-checking — UPDATED Day 2, supersedes the Day 1 "single-disc + audit-only"
-decision below (kept for history):**
-M3 built and verified real 3-circle collision checking. Tested against all 5 scenarios:
-Urban Intersection, Highway Merge, Dense Market, Cattle Crossing all **pass cleanly** (Dense Market
-notably went from "fails at any position" under single-disc to a clean pass). **Village Road is a
-real, unresolved partial result** — 3-circle raises the safe lane-offset tolerance from ~5-24cm
-(single-disc) to ~70cm-1.3m, but the target 1.5m lane offset still isn't reliably cleared on this
-specific road. Open sub-questions as of Day 2: (a) whether the 3-circle check is happening in
-`checkPathFootprint.m` (post-hoc audit) or gating the Hybrid A* search itself — needs verifying
-against the Day 1 architecture lock that `plannerHybridAStar` cannot accept a raw `vehicleCostmap`;
-(b) whether M3's 3-circle parameters should reconcile with M4's independently-built 3-disc MPC
-footprint (r=1.193m at x=[-0.117, 1.450, 3.017] from rear axle); (c) Village Road resolution — M5
-is evaluating whether widening the road to close the 1.3m→1.5m gap is realistic, pending M3's
-estimate of how much widening is needed and whether 1.5m is a hard constraint or has built-in margin
-(pending, both open).
+**Footprint / collision-checking — RESOLVED Day 2, supersedes the Day 1 "single-disc + audit-only"
+decision (kept below for history):**
+M3 built and verified real 3-circle collision checking. Tested against all 5 scenarios: Urban
+Intersection, Highway Merge, Dense Market, Cattle Crossing all **pass cleanly**. Village Road:
+M5 widened the road 5.0m→5.2m, M3 re-ran `checkPathFootprint.m` and **confirmed it now clears 1.5m**
+at the tight curve. All three previously-open sub-questions now closed, confirmed via
+`planner/buildThreeCircleCollisionChecker.m`:
+- **Architecture:** the 3-circle check gates the Hybrid A* search via `inflationCollisionChecker`
+  wrapped in `validatorVehicleCostmap` — the toolbox-sanctioned path already permitted by the Day 1
+  lock (never a *raw* `vehicleCostmap` directly, which this correctly avoids). No lock violation.
+- **Reconciliation with M4's MPC footprint:** M3's circle offsets (`[-0.1167, 1.450, 3.0167]` m from
+  rear axle) are the SAME numbers M4's independently-proposed 3-disc MPC footprint used — confirmed
+  not two separate approximations. `buildThreeCircleCollisionChecker.m` derives its placements
+  directly from `cfg.Foot.CircleOffsets_m` (the same config `checkPathFootprint.m` audits against),
+  with an assertion guarding against the two ever silently drifting apart in future.
+- **Village Road:** confirmed clear at 1.5m after the road widening.
 
 *(Original Day 1 decision, for history — single-disc footprint (2.52m) undercovers the true vehicle
 nose by 1.385m; audit showed 0/223 true-body collisions on placeholder maps; decision was
 single-disc + audit-only given multi-circle wasn't natively supported by the Navigation Toolbox
-validator. Superseded by the working 3-circle implementation above.)*
+validator. Fully superseded by the working, verified 3-circle implementation above.)*
 
-**Status Day 2:** GlobalPlanner is a confirmed dummy stub in the top-level model. Two of M3's three
-original Simulink-safety blockers are now clarified: the string-vs-enum `class` field issue is
-**resolved** (`loadM1RealPerception.m` verified to genuinely consume `AgentClass` enum objects;
-`generateFakeTracksAndPredictions.m`, the one file still using plain strings, is confirmed dead code
-with zero live callers — M3 agreed to delete it). **Variable-length structs are NOT resolved** — M3
-confirmed two live functions still grow struct arrays dynamically (`buildRealOccupancyMap.m`:
-`agentInfo`/`layers`; `loadM2RealPredictions.m`: `predictions`), plus a third newly-found issue:
-`computeM1FirstSeenTimes.m` uses `containers.Map`, also incompatible with a MATLAB Function block.
-M3 is scoping the real conversion work and timing — **do not swap GlobalPlanner from stub to real
-until M3 confirms all three are resolved.**
+**Status Day 2:** GlobalPlanner is a confirmed dummy stub in the top-level model. Class-enum blocker
+resolved (`loadM1RealPerception.m` verified to genuinely consume `AgentClass` enum objects;
+`generateFakeTracksAndPredictions.m`, the file still using plain strings, confirmed dead code with
+zero live callers — **deleted by M3, confirmed via this pull**). Variable-length struct blocker: M3
+confirmed three functions still need conversion (`buildRealOccupancyMap.m`, `loadM2RealPredictions.m`,
+`computeM1FirstSeenTimes.m` using `containers.Map`) — **status of that conversion not yet
+reconfirmed since M3's last update; do not swap GlobalPlanner from stub to real until confirmed.**
 
 ## 4. Ego state (two buses — legitimately different, not duplicates)
 
 - **`SihEgoBus`** (M1 owner, `buses/sihCreateBuses.m`) — perception-published world pose, from sensing.
   5 fields: `x`, `y`, `yaw`, `velocity`, `Timestamp` (simulation time, not wall-clock).
-- **`SihEgoStateBus`** (M4 owner, `control/createM4BusObjects.m`) — vehicle-dynamics plant's own state
-  feedback to the controller: `X`, `Y` (rear-axle, world frame), `psi` (heading, rad, CCW+),
-  `v` (signed speed, m/s).
-- **Do not assume these are interchangeable** despite similar names/fields — different purpose, different
-  producer.
-- **Current top-level model wiring (interim, Day 1):** Control's `ego_state` input is fed by a dedicated
-  zero-init stub (`EgoStateConst`), NOT by Perception's real `EgoOut`. Perception's `SihEgoBus` output
-  currently goes unused in the model. This needs real reconciliation once M4's vehicle dynamics plant
-  exists and actually publishes something for Control to consume.
+- **`SihEgoStateBus`** — **DELETED Day 2**, confirmed via `sihDefineBuses()` output
+  (`SihEgoStateBus : DELETED (was duplicate of SihEgoBus)`). `SihEgoBus` is now the single canonical
+  ego bus.
+- **`M4_VehicleDynamics.slx` now exists and is wired into the top-level model** — real plant with
+  `steering_angle`/`acceleration` inputs, `ego_state`/`actor_pose` outputs. This appears to resolve
+  the long-standing reconciliation question, but the exact wiring hasn't been independently traced
+  field-by-field yet — treat as likely resolved, not fully confirmed.
+- `scenario_decision_logic/scenarios/egoBusToScenarioPose.m` (new) converts `SihEgoBus` →
+  Automated Driving Toolbox `ActorPose` for M5's Scenario Reader. **Open question sent to M1/M5:**
+  this hardcodes `egoPose.ActorID = uint32(1)`, while `perception/sihCreateRealSensors.m` explicitly
+  excludes ego by dynamic `ActorID` match, not by assuming index 1. Needs confirming the ego actor is
+  guaranteed ActorID=1 in every scenario M5 builds, or this could silently misassign ego's pose.
 
 ## 5. Stateflow → Control (M5 owner, M4-only consumer)
 
@@ -126,18 +135,23 @@ Bus: `SihDrivingModeBus` (defined in `buses/sihDefineBuses.m`, M6-owned)
 - Concrete values (`control/drivingModeParams.m`, M4-owned, easy to retune):
   CRUISE 30 km/h / CAUTIOUS 15 / YIELD 5 / STOP 0. Obstacle margins: 0.5 / 1.0 / 1.5 / 2.0 m.
 
-**`agent_density` / `risk_zone_high_risk_agent` — resolved, no new bus needed.** These are
-computed internally by DecisionLogic's `computeDecisionSignals.m`, consuming M1's existing
-`SihPerceptionBus.tracks`/`num_tracks` directly (position + class only, current frame — not
-predictive). Verified: correctly loops `1:num_tracks`, checks `.valid`, uses `AgentClass` enum.
-Zone radii (`DENSITY_ZONE_RADIUS_M=30`, `RISK_ZONE_RADIUS_M=15`) are placeholders, to be retuned
-in Phase 1 against real scenario data. **`planner_infeasible` remains open — M3's call, pending**
-(likely an `IsPathFound`-type flag already in M3's internal `planResult`, needs bussing out if so).
+**`agent_density` / `risk_zone_high_risk_agent` — RESOLVED, no new bus needed.** Computed internally
+by DecisionLogic's `computeDecisionSignals.m`, consuming M1's existing `SihPerceptionBus.tracks`/
+`num_tracks` directly (position + class, current frame — not predictive). Verified correct.
+Zone radii (`DENSITY_ZONE_RADIUS_M=30`, `RISK_ZONE_RADIUS_M=15`) are placeholders for Phase 1 tuning.
 
-**Status Day 2:** DecisionLogic is a confirmed dummy stub. Chart status per M5: dwell-time hysteresis
-added, repointed to canonical `DrivingMode.m` — but `computeDecisionSignals.m` is verified NOT yet
-called from `build_driving_mode_stateflow.m` (checked directly, zero references), so the real
-signals aren't wired into the live chart's guard conditions yet.
+**`planner_infeasible` — RESOLVED Day 2.** `SihPlanBus.PlannerInfeasible` (boolean), confirmed pushed
+(commit `59d1847`). Wired into the chart via `extractPlannerInfeasible.m`; M5 reports
+`PlannerInfeasible=true` correctly triggers `driving_mode=STOP`, tested end-to-end.
+
+**Status Day 2:** DecisionLogic still a confirmed dummy stub in the top-level model, though M5 reports
+the real chart is fully wired and tested standalone (`computeDecisionSignals.m` and
+`extractPlannerInfeasible.m` both confirmed integrated, dwell-time hysteresis added, repointed to
+canonical `DrivingMode.m`). Merge into `sih_top_model.slx` not yet done — M5 has
+`scenario_decision_logic/MERGE_CHECKLIST.md` ready. **`computeDecisionSignals.m`'s wiring into the
+live chart's guard conditions has not been independently verified by M6** (not visible via text
+search of the build script, since it may live inside the compiled `.slx` chart itself) — get direct
+confirmation (screenshot of the actual guard condition) before merging.
 
 ## 6. Control → Vehicle (M4 owner)
 
@@ -153,6 +167,14 @@ Bus: `SihControlCmdBus` (defined in `control/createM4BusObjects.m`)
   the NEXT replan cycle, rather than creating a same-step algebraic loop between subsystems running at
   different rates.
 
+**OPEN — `PlannerInfeasible` behavior, needs group sign-off, not yet decided:** When
+`PlannerInfeasible=true`, should Control (a) hold the last valid path via `planFreshnessGuard` as if
+stale, (b) force `driving_mode` toward STOP regardless of Stateflow's own state, or (c) a bounded
+hybrid — hold for a small number of cycles, then force STOP if it persists (M6's recommendation,
+mirroring the M-of-N confirmation/deletion pattern M1's tracker already uses, sent but not yet
+confirmed by M3/M4/M5). Also open: does any Control-side STOP override get reflected back onto the
+actual `SihDrivingModeBus` value for M5/logging, or stay purely internal to Control?
+
 **Status Day 2:** Control is REAL — wired via a `Model Reference` block to M4's `control/M4_Control.slx`
 (not a nested Subsystem, deliberately, since `.slx` is binary and git can't merge it — keeps M4's file
 and the top-level model as separate files nobody collides on). Port order:
@@ -163,9 +185,17 @@ The Simulink block itself is a compiled stub with correct types (constant output
 algorithm is validated in plain MATLAB (`control/setup_m4_day1.m`) but not yet ported into the block
 (blocked on codegen bounds for variable-size arrays gated on `NumWaypoints`).
 
-**Verified: top-level model (`model/sih_top_model.slx`) runs end-to-end, 0 errors, 0 warnings**, with
-Control real (Model Reference) and Perception/Prediction/GlobalPlanner/DecisionLogic as confirmed dummy
-stubs. This is the Phase 0 exit checkpoint, met.
+**KNOWN GAP, confirmed Day 2:** neither M6 nor M4 has MPC Toolbox installed — the full top-level model
+cannot compile/run end-to-end on either machine (`Failed to load library 'mpclib'`). Unclear whether
+this affects other team members too. **Needs a real decision, revisiting the Day 1 fallback options
+(licence request / hand-rolled fmincon MPC / Pure Pursuit+PID) — this has been deferred since Day 1
+without a final resolution, and now confirmed to block at least 2 of 6 team members from running the
+complete model locally.**
+
+**Verified Day 1: top-level model (`model/sih_top_model.slx`) ran end-to-end, 0 errors, 0 warnings**,
+before `M4_VehicleDynamics.slx` was added — that specific verification is now stale given the model's
+structure has changed since (VehicleDynamics block, bus selector added). Needs re-verification once
+the mpclib gap is resolved on some machine that has the toolbox.
 
 ## 7. Vehicle model (locked, all members)
 
@@ -199,18 +229,17 @@ stubs run at the base rate.
 
 ## 11. Open items — genuinely unresolved as of Day 2
 
-- **M2 (Prediction)** — count/timestamp questions answered; MaxTracks sync described as done but
-  NOT YET VERIFIED via `git log` — do not wire in until confirmed pushed.
-- **M3 (GlobalPlanner)** — class-enum blocker resolved; variable-length struct blocker confirmed
-  NOT resolved (3 specific functions identified); M3 scoping real timing.
-- **M3 (footprint)** — 3-circle upgrade verified working on 4/5 scenarios; Village Road resolution
-  pending M3's widening estimate; architecture question (post-hoc audit vs. search-time gating)
-  unverified; reconciliation with M4's MPC footprint unverified.
-- **M5 (DecisionLogic)** — `agent_density`/`risk_zone_high_risk_agent` resolved (Section 5); chart
-  confirmed not yet calling `computeDecisionSignals.m`; `planner_infeasible` waiting on M3.
+- **M2 (Prediction)** — flat bus shape confirmed final; N=20 vs N=10 horizon needs confirming as
+  intentional; no count field is a known, deferred inconsistency, not a blocker.
+- **M3 (GlobalPlanner)** — footprint architecture fully resolved. Variable-length struct conversion
+  status needs reconfirming (last known: 3 functions still need it, timing not yet given).
+- **M4/M3/M5 — `PlannerInfeasible` Control behavior** — needs explicit group sign-off (Section 6).
+- **M4/M6 — MPC Toolbox gap** — confirmed blocking at least 2 of 6 members from running the full
+  model; Day 1 fallback decision never finalized, needs revisiting now that impact is confirmed wider.
+- **M5 (DecisionLogic)** — chart reportedly fully wired and tested standalone; merge into top-level
+  model not yet done; `computeDecisionSignals.m`'s live-chart wiring not independently verified by M6.
 - `speedCap_mps` feedback loop (Section 6) — not wired, pending GlobalPlanner going real.
-- `SihEgoBus` vs `SihEgoStateBus` real reconciliation (Section 4) — pending M4's vehicle dynamics plant.
-- **Duplicate/stale files in `Prediction/`** (`sihCreateBuses.m`, `AgentClass.m`, `sihConfig.m`) — same
-  risk class as fixed bugs earlier. Needs M2 to delete once Section 2's open items are resolved.
-- **`generateFakeTracksAndPredictions.m`** — confirmed dead code (zero live callers), M3 agreed to
-  delete. Low priority cleanup.
+- **`SihEgoBus`/`egoBusToScenarioPose.m` ActorID=1 hardcoding** — question sent to M1/M5, unconfirmed
+  whether this is always safe or could silently misassign ego's pose in some scenario configurations.
+- **Duplicate/stale files in `Prediction/`** — RESOLVED Day 2, real shadowing bug found and fixed
+  (see Section 1).
