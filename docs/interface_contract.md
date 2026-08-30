@@ -33,18 +33,21 @@ object itself is one agent's shape (`id`, `valid`, `predicted_positions[10x2]`,
 `uncertainty_radius[10x1]`), with the fixed-size array (matching M1's `MaxTracks`) set on the block's
 output **port** in Ports and Data Manager, not in the bus object file itself.
 
-**Open questions, unconfirmed by M2:**
-- No confirmed count/valid-total signal — unclear whether GlobalPlanner loops all slots checking
-  `.valid`, or a companion count field exists elsewhere.
-- No confirmed batch timestamp on prediction output.
-- M2 is mid-fix syncing their array size from 20→40 to match M1's real `MaxTracks` change —
-  **do not wire against this bus until M2 confirms the sync is pushed.**
+**Open questions:**
+- No count/valid-total signal — M2 confirmed this is a known gap, not yet added (no room on Day 2
+  push). Consumers must loop all slots checking `.valid`. Flagged as inconsistent with the
+  `num_tracks` convention used elsewhere — **planned follow-up after Phase 1**, not a blocker.
+- Batch timestamp — M2 confirmed adding this in the same push as the MaxTracks sync.
+- **M2's MaxTracks 20→40 sync described as done, but NOT YET VERIFIED on GitHub** — `git log` on
+  `Prediction/createPredictionBusObjects.m` as of last check still shows only the original Day 1
+  commit. **Do not wire against this bus until a fresh push is confirmed via `git log`, not just a
+  message.**
 - Horizon length N=10 explicitly NOT final — M2 expects to retune once M1's real Day 3 data lands.
 
 `buses/sihDefineBuses.m` currently still has an M6-authored placeholder `SihPredictionBus`
 (container-bus shape, structurally different from M2's real one) — **this needs deleting once M2's
-open items above are answered**, replaced with a call to M2's `createPredictionBusObjects()`,
-same pattern used for M1 and M4.
+real push is verified**, replaced with a call to M2's `createPredictionBusObjects()`, same pattern
+used for M1 and M4.
 
 ## 3. GlobalPlanner → Control (M3 owner)
 
@@ -62,21 +65,37 @@ duplicated elsewhere)
 - **CONFIRMED Day 1 (M3):** `MAX_WAYPOINTS = 5000` matches `cfg.Bus.MaxWaypoints` /
   `cfg.Plan.MaxNumPathStates` in `planner_config.m` — locked, both sides agree.
 
-**Known limitation, DECIDED (conditional):** M3's planner uses a single-disc footprint (2.52m radius)
-for collision checking; true vehicle body (4.7×1.8m) undercovers the nose by 1.385m
-(`hypot(3.8,0.9) - 2.52`). Audit (`checkPathFootprint.m`) shows 0/223 true-body collisions on every
-placeholder map tested. **Decision: keep single-disc + audit-only at the planner level** — switching to
-multi-circle isn't natively supported by the Navigation Toolbox validator (real engineering work, not a
-config flip). Mitigating factor: M4's MPC independently uses a validated 3-disc footprint
-(r=1.193m at x=[-0.117, 1.450, 3.017] from rear axle) for real-time obstacle avoidance, so the planner's
-optimism is not the last line of defense. **Revisit trigger:** any true-body collision flagged by
-`checkPathFootprint.m` during Phase 2 closed-loop testing, especially dense-market/narrow-lane scenarios.
+**Footprint / collision-checking — UPDATED Day 2, supersedes the Day 1 "single-disc + audit-only"
+decision below (kept for history):**
+M3 built and verified real 3-circle collision checking. Tested against all 5 scenarios:
+Urban Intersection, Highway Merge, Dense Market, Cattle Crossing all **pass cleanly** (Dense Market
+notably went from "fails at any position" under single-disc to a clean pass). **Village Road is a
+real, unresolved partial result** — 3-circle raises the safe lane-offset tolerance from ~5-24cm
+(single-disc) to ~70cm-1.3m, but the target 1.5m lane offset still isn't reliably cleared on this
+specific road. Open sub-questions as of Day 2: (a) whether the 3-circle check is happening in
+`checkPathFootprint.m` (post-hoc audit) or gating the Hybrid A* search itself — needs verifying
+against the Day 1 architecture lock that `plannerHybridAStar` cannot accept a raw `vehicleCostmap`;
+(b) whether M3's 3-circle parameters should reconcile with M4's independently-built 3-disc MPC
+footprint (r=1.193m at x=[-0.117, 1.450, 3.017] from rear axle); (c) Village Road resolution — M5
+is evaluating whether widening the road to close the 1.3m→1.5m gap is realistic, pending M3's
+estimate of how much widening is needed and whether 1.5m is a hard constraint or has built-in margin
+(pending, both open).
 
-**Status Day 2:** GlobalPlanner is a confirmed dummy stub in the top-level model. M3's real pipeline was
-not Simulink-safe as of Day 1 (variable-length structs, string-typed `class` field) — M3 was converting
-internals to fixed-size/enum-typed, targeting Day 2–3 wiring. Real occupancy-map and perception-loading
-files (`buildRealOccupancyMap.m`, `loadM1RealPerception.m`, `loadM2RealPredictions.m`, etc.) have since
-appeared in the repo — **status of the Simulink-safety conversion not yet independently confirmed.**
+*(Original Day 1 decision, for history — single-disc footprint (2.52m) undercovers the true vehicle
+nose by 1.385m; audit showed 0/223 true-body collisions on placeholder maps; decision was
+single-disc + audit-only given multi-circle wasn't natively supported by the Navigation Toolbox
+validator. Superseded by the working 3-circle implementation above.)*
+
+**Status Day 2:** GlobalPlanner is a confirmed dummy stub in the top-level model. Two of M3's three
+original Simulink-safety blockers are now clarified: the string-vs-enum `class` field issue is
+**resolved** (`loadM1RealPerception.m` verified to genuinely consume `AgentClass` enum objects;
+`generateFakeTracksAndPredictions.m`, the one file still using plain strings, is confirmed dead code
+with zero live callers — M3 agreed to delete it). **Variable-length structs are NOT resolved** — M3
+confirmed two live functions still grow struct arrays dynamically (`buildRealOccupancyMap.m`:
+`agentInfo`/`layers`; `loadM2RealPredictions.m`: `predictions`), plus a third newly-found issue:
+`computeM1FirstSeenTimes.m` uses `containers.Map`, also incompatible with a MATLAB Function block.
+M3 is scoping the real conversion work and timing — **do not swap GlobalPlanner from stub to real
+until M3 confirms all three are resolved.**
 
 ## 4. Ego state (two buses — legitimately different, not duplicates)
 
@@ -107,10 +126,18 @@ Bus: `SihDrivingModeBus` (defined in `buses/sihDefineBuses.m`, M6-owned)
 - Concrete values (`control/drivingModeParams.m`, M4-owned, easy to retune):
   CRUISE 30 km/h / CAUTIOUS 15 / YIELD 5 / STOP 0. Obstacle margins: 0.5 / 1.0 / 1.5 / 2.0 m.
 
-**Status Day 2:** DecisionLogic is a confirmed dummy stub. M5's real Stateflow chart file path in the
-repo — `scenario_decision_logic/stateflow_stub/build_driving_mode_stateflow.m` and
-`computeDecisionSignals.m` now exist in the repo, but explicit confirmation of the exact wiring/status
-from M5 is still pending.
+**`agent_density` / `risk_zone_high_risk_agent` — resolved, no new bus needed.** These are
+computed internally by DecisionLogic's `computeDecisionSignals.m`, consuming M1's existing
+`SihPerceptionBus.tracks`/`num_tracks` directly (position + class only, current frame — not
+predictive). Verified: correctly loops `1:num_tracks`, checks `.valid`, uses `AgentClass` enum.
+Zone radii (`DENSITY_ZONE_RADIUS_M=30`, `RISK_ZONE_RADIUS_M=15`) are placeholders, to be retuned
+in Phase 1 against real scenario data. **`planner_infeasible` remains open — M3's call, pending**
+(likely an `IsPathFound`-type flag already in M3's internal `planResult`, needs bussing out if so).
+
+**Status Day 2:** DecisionLogic is a confirmed dummy stub. Chart status per M5: dwell-time hysteresis
+added, repointed to canonical `DrivingMode.m` — but `computeDecisionSignals.m` is verified NOT yet
+called from `build_driving_mode_stateflow.m` (checked directly, zero references), so the real
+signals aren't wired into the live chart's guard conditions yet.
 
 ## 6. Control → Vehicle (M4 owner)
 
@@ -172,11 +199,18 @@ stubs run at the base rate.
 
 ## 11. Open items — genuinely unresolved as of Day 2
 
-- **M2 (Prediction)** — bus shape partially clarified (Section 2), still waiting on count/timestamp
-  confirmation and the MaxTracks 20→40 sync push before wiring in.
-- **M3 (GlobalPlanner)** — Simulink-safety conversion status not independently confirmed since Day 1.
-- **M5 (DecisionLogic)** — exact Stateflow chart file/wiring status not independently confirmed.
+- **M2 (Prediction)** — count/timestamp questions answered; MaxTracks sync described as done but
+  NOT YET VERIFIED via `git log` — do not wire in until confirmed pushed.
+- **M3 (GlobalPlanner)** — class-enum blocker resolved; variable-length struct blocker confirmed
+  NOT resolved (3 specific functions identified); M3 scoping real timing.
+- **M3 (footprint)** — 3-circle upgrade verified working on 4/5 scenarios; Village Road resolution
+  pending M3's widening estimate; architecture question (post-hoc audit vs. search-time gating)
+  unverified; reconciliation with M4's MPC footprint unverified.
+- **M5 (DecisionLogic)** — `agent_density`/`risk_zone_high_risk_agent` resolved (Section 5); chart
+  confirmed not yet calling `computeDecisionSignals.m`; `planner_infeasible` waiting on M3.
 - `speedCap_mps` feedback loop (Section 6) — not wired, pending GlobalPlanner going real.
 - `SihEgoBus` vs `SihEgoStateBus` real reconciliation (Section 4) — pending M4's vehicle dynamics plant.
 - **Duplicate/stale files in `Prediction/`** (`sihCreateBuses.m`, `AgentClass.m`, `sihConfig.m`) — same
   risk class as fixed bugs earlier. Needs M2 to delete once Section 2's open items are resolved.
+- **`generateFakeTracksAndPredictions.m`** — confirmed dead code (zero live callers), M3 agreed to
+  delete. Low priority cleanup.
