@@ -1,24 +1,16 @@
-function [staticOccupied, staticRaw] = buildStaticLayerFromRoad(roadBoundaryCells, refMap, cfg)
+function [staticOccupied, staticRaw] = buildStaticLayerFromRoad(roadBoundaryCells, refMap, cfg, egoR)
 %BUILDSTATICLAYERFROMROAD  Rasterize M5's road() geometry into a static
 %   occupancy layer: on-road = free, off-road = occupied.
 %
-%   roadBoundaryCells : output of roadBoundaries(scenario) - cell array,
-%                        one cell per road, each an Nx3 closed-loop
-%                        polygon [x y z] in WORLD coordinates.
-%   refMap             : a binaryOccupancyMap defining the grid to
-%                        rasterize onto - same size/resolution/world
-%                        extent as whatever you'll OR this into.
-%   cfg                 : needs cfg.Risk.static_m
+%   egoR : the SAME ego footprint radius used against agent obstacles
+%          (cfg.Foot.Radius_m or cfg.Foot.CircleRadius_m, depending on
+%          cfg.Foot.Mode). REQUIRED - without it, road edges are only
+%          inflated by cfg.Risk.static_m (currently 0), meaning the
+%          planner treats the vehicle as a POINT against road edges
+%          while treating it as a proper disc against agents. Confirmed
+%          this WAS the actual live behavior before this fix.
 %
-%   staticOccupied : inflated static layer (off-road + risk margin).
-%   staticRaw      : UNINFLATED off-road mask - exact road edge, no
-%                    margin. Feeds checkPathFootprint.m's ground-truth
-%                    audit, same convention buildPlaceholderMap.m used
-%                    for its hardcoded kerb rectangles.
-%
-%   Multiple roads are combined by OR-ing each road's own on-road mask,
-%   NOT by polyshape union - avoids self-intersection issues at
-%   junctions where two road() calls overlap.
+%   [... rest of header unchanged ...]
 
 nRows = refMap.GridSize(1);
 nCols = refMap.GridSize(2);
@@ -38,12 +30,19 @@ for k = 1:numel(roadBoundaryCells)
     onRoad = onRoad | reshape(in, nRows, nCols);
 end
 
-offRoad = ~onRoad;                  % off-road = occupied
-staticRaw = offRoad;                % exact edge, no margin - ground truth
+offRoad = ~onRoad;
+staticRaw = offRoad;
 
 layer = binaryOccupancyMap(offRoad, refMap.Resolution);
-if cfg.Risk.static_m > 0
-    inflate(layer, cfg.Risk.static_m);
+totalInflation = egoR + cfg.Risk.static_m;
+% inflate() requires a strictly positive radius - errors on exactly 0.
+% threeCircle mode passes egoR=0 (footprint applied per-pose downstream
+% by validatorVehicleCostmap instead), and cfg.Risk.static_m defaults to
+% 0.00 - so this sum can legitimately be 0. Skip inflate() in that case;
+% skipping it is correct, not a workaround, since inflating by 0 would be
+% a no-op anyway.
+if totalInflation > 0
+    inflate(layer, totalInflation);
 end
 staticOccupied = occupancyMatrix(layer) > 0;
 end

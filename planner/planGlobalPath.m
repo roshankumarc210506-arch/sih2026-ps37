@@ -3,6 +3,24 @@ function planResult = planGlobalPath(omap, cfg, mapInfo, startPose, goalPose)
 %
 %   Returns geometry only: [x y theta] + directions. No velocity, no
 %   per-waypoint timestamps - those are the profiler's job (Step 5).
+%
+%   MODE BRANCH (new - three-circle collision checking):
+%   plannerHybridAStar's StateValidator property only accepts
+%   validatorOccupancyMap or validatorVehicleCostmap (confirmed via
+%   MathWorks docs - no custom nav.StateValidator subclass is accepted,
+%   so a hand-rolled multi-point validator cannot be wired in here).
+%   'single'      : omap is a binaryOccupancyMap (egoR already baked in
+%                   by buildRealOccupancyMap.m) -> validatorOccupancyMap,
+%                   exactly as before.
+%   'threeCircle' : omap is a vehicleCostmap with a real
+%                   InflationCollisionChecker attached (three circles,
+%                   cfg.Foot's exact locked geometry) -> validatorVehicleCostmap,
+%                   which evaluates all three circles per pose, not one
+%                   point. Everything below this point (search, endpoint
+%                   guards, extraction, cusp/direction logic) is IDENTICAL
+%                   regardless of mode - it only ever calls the validator
+%                   through the common nav.StateValidator interface
+%                   (isStateValid / isMotionValid).
 
 if nargin < 4 || isempty(startPose), startPose = mapInfo.StartPose; end
 if nargin < 5 || isempty(goalPose),  goalPose  = mapInfo.GoalPose;  end
@@ -11,11 +29,27 @@ tPlanStart = navClock();
 
 %% ---------- state space, bounds derived from the map ----------
 ss = stateSpaceSE2;
-ss.StateBounds = [omap.XWorldLimits; omap.YWorldLimits; -pi pi];
+switch lower(cfg.Foot.Mode)
+    case 'single'
+        ss.StateBounds = [omap.XWorldLimits; omap.YWorldLimits; -pi pi];
+    case 'threecircle'
+        % vehicleCostmap exposes MapExtent = [xmin xmax ymin ymax],
+        % not XWorldLimits/YWorldLimits (that property belongs to
+        % binaryOccupancyMap/occupancyMap, not vehicleCostmap).
+        ss.StateBounds = [omap.MapExtent(1,1:2); omap.MapExtent(1,3:4); -pi pi];
+    otherwise
+        error('planGlobalPath:BadMode', 'cfg.Foot.Mode must be ''single'' or ''threeCircle''.');
+end
 
 %% ---------- validator ----------
-sv = validatorOccupancyMap(ss);
-sv.Map = omap;
+switch lower(cfg.Foot.Mode)
+    case 'single'
+        sv = validatorOccupancyMap(ss);
+        sv.Map = omap;
+    case 'threecircle'
+        sv = validatorVehicleCostmap(ss);
+        sv.Map = omap;
+end
 sv.ValidationDistance = cfg.Plan.ValidationDistance_m;
 
 %% ---------- endpoint guards ----------

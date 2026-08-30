@@ -19,6 +19,17 @@ function planBus = packPlanBus(velPlan, planResult, cfg, resetSeq)
 %   persistent SeqNum counter to 1 at the start of a fresh run, so
 %   repeated test runs in one MATLAB session don't inherit a stale
 %   count from the previous one.
+%
+%   PROPOSED NEW FIELD (not yet locked - needs M4/M5/M6 sign-off, same as
+%   any other contract change): PlannerInfeasible, logical, appended at
+%   the END of the struct so existing consumers indexing by field order
+%   are unaffected. Sourced directly from planResult.IsPathFound (already
+%   computed by planGlobalPath.m on every plan - this just exposes it).
+%   true = no path was found (BadStart/BadGoal/SearchFailed - see
+%   planResult.FailureReason for which). This is what M5's Stateflow
+%   chart needs as planner_infeasible and what extractPlannerInfeasible.m
+%   is presumably built to read - proposing exactly this name/type/
+%   position for team confirmation, not yet treating it as final.
 
 persistent seqCounter
 if isempty(seqCounter)
@@ -54,4 +65,5 @@ planBus.SeqNum              = uint32(seqCounter);
 planBus.GenerationTimestamp = planResult.GenerationTimestamp;
 planBus.MapTimestamp        = planResult.MapTimestamp;
 planBus.MapAgeAtPlan_s      = planResult.MapAgeAtPlan_s;
+planBus.PlannerInfeasible   = logical(~planResult.IsPathFound);   % PROPOSED, see header - not yet locked
 end
