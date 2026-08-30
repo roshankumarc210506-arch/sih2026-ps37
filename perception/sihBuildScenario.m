@@ -35,49 +35,57 @@ egoVehicle = vehicle(scenario, ...
     'Height',       1.5, ...
     'Wheelbase',    2.5, ...
     'RearOverhang', 0.9, ...
+    'Mesh',         sihActorMesh(AgentClass.Car, [4.7 1.8 1.5]), ...
     'Position',     [0 -1.5 0]);
 smoothTrajectory(egoVehicle, roadCenters + [0 -1.5 0], 8);
 
 % ---------------- 1. Oncoming car ----------------
 a = vehicle(scenario, 'ClassID', sihScenarioClassID(AgentClass.Car), 'Name','OncomingCar', ...
-    'Length',4.5,'Width',1.8,'Height',1.5,'Position',[150 2 0]);
+    'Length',4.5,'Width',1.8,'Height',1.5, ...
+    'Mesh',sihActorMesh(AgentClass.Car, [4.5 1.8 1.5]),'Position',[150 2 0]);
 smoothTrajectory(a, [150 2 0; 100 2 0; 55 1.5 0; 10 1.5 0], 7);
 classOf(a.ActorID) = AgentClass.Car;
 
 % ---------------- 2. Two-wheeler weaving ahead of ego ----------------
 a = actor(scenario, 'ClassID', sihScenarioClassID(AgentClass.TwoWheeler), 'Name','TwoWheeler', ...
-    'Length',1.9,'Width',0.7,'Height',1.4,'Position',[25 -2.5 0]);
+    'Length',1.9,'Width',0.7,'Height',1.4, ...
+    'Mesh',sihActorMesh(AgentClass.TwoWheeler, [1.9 0.7 1.4]),'Position',[25 -2.5 0]);
 smoothTrajectory(a, [25 -2.5 0; 45 -0.5 0; 65 -2.6 0; 90 -0.8 0; 120 6 0; 160 10 0], 9);
 classOf(a.ActorID) = AgentClass.TwoWheeler;
 
 % ---------------- 3. Slow auto-rickshaw directly ahead (occluder) ----------
 a = vehicle(scenario, 'ClassID', sihScenarioClassID(AgentClass.AutoRickshaw), 'Name','AutoRickshaw', ...
-    'Length',2.6,'Width',1.4,'Height',1.7,'Wheelbase',2.0,'Position',[38 -1.4 0]);
+    'Length',2.6,'Width',1.4,'Height',1.7,'Wheelbase',2.0, ...
+    'Mesh',sihActorMesh(AgentClass.AutoRickshaw, [2.6 1.4 1.7]),'Position',[38 -1.4 0]);
 smoothTrajectory(a, [38 -1.4 0; 80 -1.4 0; 130 6.5 0; 175 10.5 0], 5.5);
 classOf(a.ActorID) = AgentClass.AutoRickshaw;
 
 % ---------------- 4. Pushcart at the road edge ----------------
 a = actor(scenario, 'ClassID', sihScenarioClassID(AgentClass.PushCart), 'Name','PushCart', ...
-    'Length',1.6,'Width',0.9,'Height',1.1,'Position',[70 -3.2 0]);
+    'Length',1.6,'Width',0.9,'Height',1.1, ...
+    'Mesh',sihActorMesh(AgentClass.PushCart, [1.6 0.9 1.1]),'Position',[70 -3.2 0]);
 smoothTrajectory(a, [70 -3.2 0; 84 -3.3 0], 1.1);
 classOf(a.ActorID) = AgentClass.PushCart;
 
 % ---------------- 5. Pedestrian crossing ----------------
 a = actor(scenario, 'ClassID', sihScenarioClassID(AgentClass.Pedestrian), 'Name','Pedestrian', ...
-    'Length',0.5,'Width',0.6,'Height',1.7,'Position',[96 -5 0]);
+    'Length',0.5,'Width',0.6,'Height',1.7, ...
+    'Mesh',sihActorMesh(AgentClass.Pedestrian, [0.5 0.6 1.7]),'Position',[96 -5 0]);
 smoothTrajectory(a, [96 -5 0; 98 -1 0; 100 4 0; 101 7 0], 1.4);
 classOf(a.ActorID) = AgentClass.Pedestrian;
 
 % ---------------- 6. Cattle wandering into the road (the hard one) ------
 a = actor(scenario, 'ClassID', sihScenarioClassID(AgentClass.Animal), 'Name','Cow', ...
-    'Length',2.2,'Width',0.9,'Height',1.5,'Position',[135 -6 0]);
+    'Length',2.2,'Width',0.9,'Height',1.5, ...
+    'Mesh',sihActorMesh(AgentClass.Animal, [2.2 0.9 1.5]),'Position',[135 -6 0]);
 smoothTrajectory(a, [135 -6 0; 137 -2 0; 139 3 0; 141 6 0], 1.3);
 classOf(a.ActorID) = AgentClass.Animal;
 
 % ---------------- 7. Second pedestrian, close-crossing with #5 ----------
 % Two pedestrians crossing near each other is the classic JPDA stress test.
 a = actor(scenario, 'ClassID', sihScenarioClassID(AgentClass.Pedestrian), 'Name','Pedestrian2', ...
-    'Length',0.5,'Width',0.6,'Height',1.7,'Position',[101 6 0]);
+    'Length',0.5,'Width',0.6,'Height',1.7, ...
+    'Mesh',sihActorMesh(AgentClass.Pedestrian, [0.5 0.6 1.7]),'Position',[101 6 0]);
 smoothTrajectory(a, [101 6 0; 99 1 0; 97 -4 0], 1.5);
 classOf(a.ActorID) = AgentClass.Pedestrian;
 
