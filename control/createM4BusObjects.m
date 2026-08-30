@@ -44,6 +44,7 @@ p(4) = mkElem('SeqNum',              1,                 'uint32');
 p(5) = mkElem('GenerationTimestamp', 1,                 'double');
 p(6) = mkElem('MapTimestamp',        1,                 'double');
 p(7) = mkElem('MapAgeAtPlan_s',      1,                 'double');
+p(8) = mkElem('PlannerInfeasible', 1, 'boolean');
 
 SihPlanBus             = Simulink.Bus;
 SihPlanBus.Elements    = p;
