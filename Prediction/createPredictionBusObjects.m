@@ -9,7 +9,7 @@ function createPredictionBusObjects()
 % Run this once (e.g. from a project startup script) before opening the
 % Simulink model, after M6's shared bus script has already run.
 
-N = 10; % must match the horizon N used when calling predictMotionCVCTR
+N = 20; % must match the horizon N used when calling predictMotionCVCTR
 
 % --- PredictionBus: one element of this module's output ---
 predElems(1) = Simulink.BusElement; predElems(1).Name = 'id';                  predElems(1).DataType = 'uint32';
