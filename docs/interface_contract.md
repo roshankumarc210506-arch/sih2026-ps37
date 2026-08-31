@@ -167,13 +167,7 @@ Bus: `SihControlCmdBus` (defined in `control/createM4BusObjects.m`)
   the NEXT replan cycle, rather than creating a same-step algebraic loop between subsystems running at
   different rates.
 
-**OPEN — `PlannerInfeasible` behavior, needs group sign-off, not yet decided:** When
-`PlannerInfeasible=true`, should Control (a) hold the last valid path via `planFreshnessGuard` as if
-stale, (b) force `driving_mode` toward STOP regardless of Stateflow's own state, or (c) a bounded
-hybrid — hold for a small number of cycles, then force STOP if it persists (M6's recommendation,
-mirroring the M-of-N confirmation/deletion pattern M1's tracker already uses, sent but not yet
-confirmed by M3/M4/M5). Also open: does any Control-side STOP override get reflected back onto the
-actual `SihDrivingModeBus` value for M5/logging, or stay purely internal to Control?
+**`PlannerInfeasible` behavior — LOCKED, signed off by M6 (Day 2):** When `PlannerInfeasible=true`, Control forces `driving_mode` toward STOP immediately and unconditionally — no debounce, overriding any other state. This is kept structurally separate from `planFreshnessGuard`'s ordinary staleness-hold logic (different failure category — a stale-but-valid plan vs. no plan at all). Recovery requires BOTH `planner_infeasible` clearing AND Control's own freshness check passing (`SeqNum` incremented, `MapAgeAtPlan_s` low) — the flag clearing alone is not sufficient. Recovery target is NOT hardcoded to CRUISE — falls through to whatever DecisionLogic's normal `agent_density`/`risk_zone_high_risk_agent` logic computes for the current state. M4 confirmed the STOP speed cap settles smoothly under NMPC (max residual |v|=0.02 m/s, not a brake-slam). **Still open:** whether a Control-side STOP override gets reflected back onto `SihDrivingModeBus` for M5/logging visibility, or stays purely internal to Control — unconfirmed, needs a decision.
 
 **Status Day 2:** Control is REAL — wired via a `Model Reference` block to M4's `control/M4_Control.slx`
 (not a nested Subsystem, deliberately, since `.slx` is binary and git can't merge it — keeps M4's file
@@ -233,7 +227,7 @@ stubs run at the base rate.
   intentional; no count field is a known, deferred inconsistency, not a blocker.
 - **M3 (GlobalPlanner)** — footprint architecture fully resolved. Variable-length struct conversion
   status needs reconfirming (last known: 3 functions still need it, timing not yet given).
-- **M4/M3/M5 — `PlannerInfeasible` Control behavior** — needs explicit group sign-off (Section 6).
+- **`PlannerInfeasible` field** — pushed and verified (bus definition: commit `59d1847`; packing logic: commit `bd68019`). Behavior spec LOCKED and written into Section 6 (Day 2). Still open: whether a Control-side STOP override reflects back onto `SihDrivingModeBus` for M5/logging.
 - **M4/M6 — MPC Toolbox gap** — confirmed blocking at least 2 of 6 members from running the full
   model; Day 1 fallback decision never finalized, needs revisiting now that impact is confirmed wider.
 - **M5 (DecisionLogic)** — chart reportedly fully wired and tested standalone; merge into top-level
