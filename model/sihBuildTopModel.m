@@ -8,7 +8,7 @@ function sihBuildTopModel()
 %
 % Owner: M6.
 %
-% OPEN ISSUE (flag to M1 + M4): SihEgoBus and SihEgoStateBus are two
+% RESOLVED (confirmed against M4_Control/ego_state port): SihEgoStateBus was
 % DIFFERENT bus objects, never reconciled. Control gets its own
 % dedicated ego_state stub below, NOT fed from Perception's real EgoOut.
 
@@ -22,22 +22,20 @@ function sihBuildTopModel()
     new_system(modelName);
     open_system(modelName);
     set_param(modelName, 'InitFcn', [...
-        'sihDefineBuses(); ' ...
+'sihDefineBuses(); ' ...
+    'sihSetupNlobj(); ' ...
         'perceptionStub = Simulink.Bus.createMATLABStruct(''SihPerceptionBus''); ' ...
         'egoStub = Simulink.Bus.createMATLABStruct(''SihEgoBus''); ' ...
-        'egoStateStub = Simulink.Bus.createMATLABStruct(''SihEgoStateBus''); ' ...
         'planStub = Simulink.Bus.createMATLABStruct(''SihPlanBus''); ' ...
         'modeStub = DrivingMode.STOP; ' ]);
     set_param(modelName, 'Solver', 'FixedStepDiscrete', 'FixedStep', '0.1');
 
     perceptionStub = Simulink.Bus.createMATLABStruct('SihPerceptionBus');
     egoStub        = Simulink.Bus.createMATLABStruct('SihEgoBus');
-    egoStateStub   = Simulink.Bus.createMATLABStruct('SihEgoStateBus');
     planStub       = Simulink.Bus.createMATLABStruct('SihPlanBus');
     modeStub       = DrivingMode.STOP;
     assignin('base', 'perceptionStub', perceptionStub);
     assignin('base', 'egoStub', egoStub);
-    assignin('base', 'egoStateStub', egoStateStub);
     assignin('base', 'planStub', planStub);
     assignin('base', 'modeStub', modeStub);
 
@@ -96,23 +94,21 @@ function sihBuildTopModel()
     add_block('simulink/Ports & Subsystems/Model', ct, 'Position', [560 130 690 220]);
     set_param(ct, 'ModelNameDialog', 'M4_Control');
 
-    add_block('simulink/Sources/Constant', [modelName '/EgoStateConst'], ...
-        'Value', 'egoStateStub', 'OutDataTypeStr', 'Bus: SihEgoStateBus', 'Position', [420 380 580 420]);
-    add_block('simulink/Sinks/Terminator', [modelName '/EgoBusTerm'], 'Position', [420 30 450 60]);
 
     add_line(modelName, 'Perception/1', 'Prediction/1', 'autorouting', 'on');
     add_line(modelName, 'Perception/1', 'GlobalPlanner/1', 'autorouting', 'on');
     add_line(modelName, 'Prediction/1', 'GlobalPlanner/2', 'autorouting', 'on');
     add_line(modelName, 'Perception/1', 'DecisionLogic/1', 'autorouting', 'on');
     add_line(modelName, 'GlobalPlanner/1', 'Control/1', 'autorouting', 'on');
-    add_line(modelName, 'Perception/2', 'EgoBusTerm/1', 'autorouting', 'on');
-    add_line(modelName, 'EgoStateConst/1', 'Control/2', 'autorouting', 'on');
+    add_line(modelName, 'Perception/2', 'Control/2', 'autorouting', 'on');
     add_line(modelName, 'DecisionLogic/1', 'Control/3', 'autorouting', 'on');
 
     save_system(modelName, fullfile(pwd, 'model', [modelName '.slx']));
     fprintf('\nBuilt %s.slx.\n', modelName);
     fprintf('REAL today: Control (M4 Model Reference).\n');
     fprintf('STUB today (confirmed with owners): Perception, Prediction, GlobalPlanner, DecisionLogic.\n');
-    fprintf('OPEN: SihEgoBus vs SihEgoStateBus not reconciled -- flag to M1+M4.\n');
+    fprintf('RESOLVED: Control/2 now fed from real SihEgoBus (Perception/2), not a stub.\n');
     fprintf('OPEN: speedCap_mps feedback loop not wired -- add when GlobalPlanner goes real.\n');
 end
+
+
