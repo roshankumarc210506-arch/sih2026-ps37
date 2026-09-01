@@ -43,14 +43,16 @@ function sihBuildTopModel()
     add_block('simulink/Ports & Subsystems/Subsystem', p, 'Position', [30 30 160 130]);
     delete_block([p '/In1']);
     delete_block([p '/Out1']);
-    add_block('simulink/Sources/Constant', [p '/PerceptionConst'], ...
-        'Value', 'perceptionStub', 'OutDataTypeStr', 'Bus: SihPerceptionBus', 'Position', [30 20 190 60]);
-    add_block('simulink/Sources/Constant', [p '/EgoConst'], ...
-        'Value', 'egoStub', 'OutDataTypeStr', 'Bus: SihEgoBus', 'Position', [30 90 190 130]);
+    add_block('simulink/Sources/From Workspace', [p '/PerceptionFromWorkspace'], ...
+        'VariableName', 'percDataFW', 'OutDataTypeStr', 'Bus: SihPerceptionBus', ...
+        'Interpolate', 'off', 'OutputAfterFinalValue', 'Holding final value', 'Position', [30 20 190 60]);
+    add_block('simulink/Sources/From Workspace', [p '/EgoFromWorkspace'], ...
+        'VariableName', 'egoDataFW', 'OutDataTypeStr', 'Bus: SihEgoBus', ...
+        'Interpolate', 'off', 'OutputAfterFinalValue', 'Holding final value', 'Position', [30 90 190 130]);
     add_block('simulink/Sinks/Out1', [p '/PerceptionOut'], 'Position', [260 20 290 60]);
     add_block('simulink/Sinks/Out1', [p '/EgoOut'], 'Position', [260 90 290 130]);
-    add_line(p, 'PerceptionConst/1', 'PerceptionOut/1', 'autorouting', 'on');
-    add_line(p, 'EgoConst/1', 'EgoOut/1', 'autorouting', 'on');
+add_line(p, 'PerceptionFromWorkspace/1', 'PerceptionOut/1', 'autorouting', 'on');
+add_line(p, 'EgoFromWorkspace/1', 'EgoOut/1', 'autorouting', 'on');
 
     pr = [modelName '/Prediction'];
     add_block('simulink/Ports & Subsystems/Subsystem', pr, 'Position', [340 30 470 90]);
@@ -110,5 +112,7 @@ function sihBuildTopModel()
     fprintf('RESOLVED: Control/2 now fed from real SihEgoBus (Perception/2), not a stub.\n');
     fprintf('OPEN: speedCap_mps feedback loop not wired -- add when GlobalPlanner goes real.\n');
 end
+
+
 
 
