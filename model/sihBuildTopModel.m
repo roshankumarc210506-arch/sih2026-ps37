@@ -24,21 +24,14 @@ function sihBuildTopModel()
     set_param(modelName, 'InitFcn', [...
 'sihDefineBuses(); ' ...
     'sihSetupNlobj(); ' ...
-        'perceptionStub = Simulink.Bus.createMATLABStruct(''SihPerceptionBus''); ' ...
-        'egoStub = Simulink.Bus.createMATLABStruct(''SihEgoBus''); ' ...
-        'planStub = Simulink.Bus.createMATLABStruct(''SihPlanBus''); ' ...
-        'modeStub = DrivingMode.STOP; ' ]);
+    'if ~exist(''percDataFW'',''var''), load(''data/m1_perception_day1_FW.mat''); end; ' ...
+    'planStub = Simulink.Bus.createMATLABStruct(''SihPlanBus''); ' ...
+    'modeStub = DrivingMode.STOP; ' ]);
     set_param(modelName, 'Solver', 'FixedStepDiscrete', 'FixedStep', '0.1');
-
-    perceptionStub = Simulink.Bus.createMATLABStruct('SihPerceptionBus');
-    egoStub        = Simulink.Bus.createMATLABStruct('SihEgoBus');
     planStub       = Simulink.Bus.createMATLABStruct('SihPlanBus');
     modeStub       = DrivingMode.STOP;
-    assignin('base', 'perceptionStub', perceptionStub);
-    assignin('base', 'egoStub', egoStub);
     assignin('base', 'planStub', planStub);
     assignin('base', 'modeStub', modeStub);
-
     p = [modelName '/Perception'];
     add_block('simulink/Ports & Subsystems/Subsystem', p, 'Position', [30 30 160 130]);
     delete_block([p '/In1']);
@@ -112,6 +105,9 @@ add_line(p, 'EgoFromWorkspace/1', 'EgoOut/1', 'autorouting', 'on');
     fprintf('RESOLVED: Control/2 now fed from real SihEgoBus (Perception/2), not a stub.\n');
     fprintf('OPEN: speedCap_mps feedback loop not wired -- add when GlobalPlanner goes real.\n');
 end
+
+
+
 
 
 
