@@ -28,6 +28,7 @@ function scenario = buildVillageRoadScenario()
 % TODO (M5, manual in DSD GUI): drag the road edges irregular, add
 % shoulder clutter/encroachment props if the app's library has them.
     egoCar = addEgoVehicle(scenario, [0 -1.5 0], 0);
+    assert(egoCar.ActorID == 1, 'egoBusToScenarioPose.m hardcodes ActorID=1 for ego -- this scenario violated the addEgoVehicle-first convention.');
     egoWaypoints = roadCenters + [0 -1.5 0];
     egoSpeed = 20 * ones(size(egoWaypoints, 1), 1) / 3.6;   % ~20 km/h
     trajectory(egoCar, egoWaypoints, egoSpeed);
