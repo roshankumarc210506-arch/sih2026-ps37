@@ -15,6 +15,7 @@ function scenario = buildDenseMarketScenario()
         'Name', 'MarketStreet');   % narrow market street
 
     egoCar = addEgoVehicle(scenario, [0 0 0], 0);
+    assert(egoCar.ActorID == 1, 'egoBusToScenarioPose.m hardcodes ActorID=1 for ego -- this scenario violated the addEgoVehicle-first convention.');
     egoWaypoints = [0 0 0; 40 0 0; 80 0 0];
     egoSpeed = 10 * ones(3, 1) / 3.6;   % ~10 km/h crawl speed
     trajectory(egoCar, egoWaypoints, egoSpeed);

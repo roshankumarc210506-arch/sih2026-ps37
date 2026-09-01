@@ -15,6 +15,7 @@ function scenario = buildHighwayMergeScenario()
         'Name', 'MergeRamp');
 
     egoCar = addEgoVehicle(scenario, [0 -1.75 0], 0);
+    assert(egoCar.ActorID == 1, 'egoBusToScenarioPose.m hardcodes ActorID=1 for ego -- this scenario violated the addEgoVehicle-first convention.');
     egoWaypoints = [0 -1.75 0; 100 -1.75 0; 250 -1.75 0];
     egoSpeed = 70 * ones(3, 1) / 3.6;   % ~70 km/h
     trajectory(egoCar, egoWaypoints, egoSpeed);

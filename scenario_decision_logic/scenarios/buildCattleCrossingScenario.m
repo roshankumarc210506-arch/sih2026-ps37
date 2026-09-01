@@ -15,6 +15,7 @@ function scenario = buildCattleCrossingScenario()
         'Name', 'OpenRoad');
 
     egoCar = addEgoVehicle(scenario, [0 -1.75 0], 0);
+    assert(egoCar.ActorID == 1, 'egoBusToScenarioPose.m hardcodes ActorID=1 for ego -- this scenario violated the addEgoVehicle-first convention.');
     egoWaypoints = [0 -1.75 0; 150 -1.75 0];
     egoSpeed = 45 * ones(2, 1) / 3.6;   % ~45 km/h open-road speed
     trajectory(egoCar, egoWaypoints, egoSpeed);

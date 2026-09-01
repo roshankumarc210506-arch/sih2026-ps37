@@ -28,6 +28,7 @@ function scenario = buildUrbanIntersectionScenario()
    % urbanIntersection_M5.mat).
 
     egoCar = addEgoVehicle(scenario, [50 -50 0], 90);
+    assert(egoCar.ActorID == 1, 'egoBusToScenarioPose.m hardcodes ActorID=1 for ego -- this scenario violated the addEgoVehicle-first convention.');
     egoWaypoints = [50 -50 0; 50 20 0; 50 40 0; 50 150 0];
     egoSpeed = 25 * ones(size(egoWaypoints, 1), 1) / 3.6;   % ~25 km/h approach
     trajectory(egoCar, egoWaypoints, egoSpeed);
