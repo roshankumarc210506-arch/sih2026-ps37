@@ -1,34 +1,26 @@
-function predictions = predictMotionCVCTRBlock(tracks, num_tracks, N, dt) %#codegen
-%PREDICTMOTIONCVCTRBLOCK Simulink-safe version of predictMotionCVCTR.
-%
-% Use this INSIDE a MATLAB Function block. Differences from the plain
-% MATLAB version (predictMotionCVCTR.m), both required by Simulink/codegen:
-%
-%   1. Output is a FIXED-SIZE 1x20 struct array, index-aligned with
-%      `tracks` (predictions(i) corresponds to tracks(i)). No dynamic
-%      growth (predictions(end+1) = ...) - Simulink requires output size
-%      to be known at compile time.
-%   2. Invalid/unused slots (i > num_tracks, or tracks(i).valid == false)
-%      get id = 0 and all-zero position/radius, rather than being omitted.
-%      Downstream blocks should check num_tracks / a mirrored valid flag,
-%      same convention as the input bus.
-%
-% INPUTS  - same conventions as predictMotionCVCTR.m:
-%   tracks     : 1x20 fixed-size struct array (SihTrackBus-shaped)
-%   num_tracks : how many of the 20 slots are real
-%   N, dt      : horizon steps / step size
-%
-% OUTPUT:
-%   predictions : 1x20 struct array, each element:
-%                   .id, .predicted_positions [N x 2], .uncertainty_radius [N x 1]
+function predictions = predictMotionCVCTRBlock(tracks, num_tracks, dt) %#codegen
+%PREDICTMOTIONCVCTRBLOCK CV/CTR predictor, output shaped to match M6's
+% locked SihPredictionBus contract: predictions.agents(1:40), .num_agents,
+% .timestamp. Horizon N=20 to match buses/sihDefineBuses.m N_HORIZON.
 
-MAX_TRACKS = 20;
+MAX_TRACKS = 40;
+N = 20;
 uncertaintyParams = classUncertaintyParams();
 
-predictions = repmat(struct( ...
+persistent prevHeading prevId hasHistory
+if isempty(prevHeading)
+    prevHeading = zeros(1, MAX_TRACKS);
+    prevId = zeros(1, MAX_TRACKS, 'uint32');
+    hasHistory = false(1, MAX_TRACKS);
+end
+
+predictions.agents = repmat(struct( ...
     'id', uint32(0), ...
     'predicted_positions', zeros(N, 2), ...
-    'uncertainty_radius', zeros(N, 1)), 1, MAX_TRACKS);
+    'uncertainty_radius', zeros(N, 1), ...
+    'valid', false), MAX_TRACKS, 1);
+predictions.num_agents = uint32(num_tracks);
+predictions.timestamp = 0;
 
 for i = 1:MAX_TRACKS
     if i > num_tracks || ~tracks(i).valid
@@ -37,22 +29,30 @@ for i = 1:MAX_TRACKS
 
     trk = tracks(i);
 
-    % yawRate is not yet on the bus contract - hardcoded to 0 (pure CV)
-    % until M1 adds it. The CTR branch below activates automatically
-    % once a real yawRate value flows in here.
     yawRate = 0;
+    if hasHistory(i) && prevId(i) == trk.id
+        headingDiff = mod(double(trk.heading) - prevHeading(i) + pi, 2*pi) - pi;
+        if abs(headingDiff) > 1e-3
+            yawRate = headingDiff / dt;
+        end
+    end
+    prevHeading(i) = double(trk.heading);
+    prevId(i) = trk.id;
+    hasHistory(i) = true;
 
-      [alpha, growthExponent, r0fallback] = lookupClassParams(uncertaintyParams, trk.class);
+    [alpha, growthExponent, r0fallback] = lookupClassParams(uncertaintyParams, trk.class);
 
     pos = zeros(N, 2);
     rad = zeros(N, 1);
 
-    x0 = trk.x; y0 = trk.y; h0 = trk.heading; v = trk.velocity;
+    x0 = double(trk.x); y0 = double(trk.y); h0 = double(trk.heading); v = double(trk.velocity);
     r0 = baseUncertaintyRadius(trk.covariance, r0fallback);
+    if abs(h0) < 1e-9 && abs(v) < 1e-9
+        r0 = r0 * 2;
+    end
 
     for k = 1:N
         t = k * dt;
-
         if abs(yawRate) > 1e-6
             theta_k = h0 + yawRate * t;
             x_k = x0 + (v / yawRate) * (sin(theta_k) - sin(h0));
@@ -63,29 +63,59 @@ for i = 1:MAX_TRACKS
         end
         pos(k, :) = [x_k, y_k];
 
-              if growthExponent == 1
+        if growthExponent == 1
             rad(k) = r0 + alpha * t;
         else
             rad(k) = r0 + alpha * (t ^ growthExponent);
         end
     end
 
-    predictions(i).id = trk.id;
-    predictions(i).predicted_positions = pos;
-    predictions(i).uncertainty_radius = rad;
+    predictions.agents(i).id = trk.id;
+    predictions.agents(i).predicted_positions = pos;
+    predictions.agents(i).uncertainty_radius = rad;
+    predictions.agents(i).valid = true;
 end
 
 end
 
-% ----- local helpers (same logic as predictMotionCVCTR.m) -----
+% ----- local helpers -----
 
 function [alpha, growthExponent, r0] = lookupClassParams(uncertaintyParams, agentClass)
-idx = find([uncertaintyParams.agentClass] == agentClass, 1);
-if isempty(idx)
-    idx = find([uncertaintyParams.agentClass] == AgentClass.Pedestrian, 1);
+alpha = 0; growthExponent = 1; r0 = 0;
+found = false;
+for k = 1:numel(uncertaintyParams)
+    if uncertaintyParams(k).agentClass == agentClass
+        alpha = uncertaintyParams(k).alpha;
+        growthExponent = uncertaintyParams(k).growthExponent;
+        r0 = uncertaintyParams(k).r0;
+        found = true;
+        break
+    end
 end
-alpha = uncertaintyParams(idx).alpha;
-growthExponent = uncertaintyParams(idx).growthExponent;
-r0 = uncertaintyParams(idx).r0;
+if ~found
+    for k = 1:numel(uncertaintyParams)
+        if uncertaintyParams(k).agentClass == AgentClass.Pedestrian
+            alpha = uncertaintyParams(k).alpha;
+            growthExponent = uncertaintyParams(k).growthExponent;
+            r0 = uncertaintyParams(k).r0;
+            break
+        end
+    end
+end
 end
 
+function r0 = baseUncertaintyRadius(covariance, fallback)
+P = double(covariance(1:2, 1:2));
+if any(isnan(P(:))) || any(isinf(P(:)))
+    r0 = fallback;
+    return
+end
+eigVals = real(eig((P + P.') / 2));
+maxEig = max(eigVals);
+if maxEig <= 0
+    r0 = fallback;
+else
+    r0 = sqrt(maxEig);
+end
+r0 = real(r0);
+end
