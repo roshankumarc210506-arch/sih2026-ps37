@@ -85,7 +85,23 @@ minDistance = 0.60;  % m, 2nd attempt. 0.6 baseline raw cluster count
                       % other diagnostics, same as last time.
 labels = reshape(pcsegdist(ptCloud, minDistance), [], 1);
 
-minPoints = 5;       % clusters smaller than this are treated as noise
+minPoints = 5;       % clusters smaller than this are treated as noise.
+                       % Day 4: tried lowering to 3 based on sihLidarDiag
+                       % showing 84.6% of FilteredTooSmall clusters had a
+                       % real actor within the attribution gate (concentrated
+                       % in TwoWheeler/Pedestrian) -- reverted after an A/B
+                       % test: false tracks/frame rose 2.67->3.19 (+19.5%)
+                       % and classification accuracy fell 63.4%->59.7%
+                       % (-3.7pp), while the target classes barely moved
+                       % (TwoWheeler per-actor tracking 78.6%->78.2%, flat).
+                       % Most of the newly-admitted small clusters turned
+                       % into duplicate/split detections on already-tracked
+                       % objects (OverSegmented +25%), not rescues of missed
+                       % ones. Proximity-to-a-real-actor is not the same as
+                       % being that actor's detection -- the diagnostic
+                       % measured the right thing but doesn't prove
+                       % causation on its own; keep 5 unless a future
+                       % attempt addresses the OverSegmented side effect.
 maxPoints = 200;      % clusters larger than this are treated as ground/
                        % background, not an actor -- confirmed empirically:
                        % every frame in a 248-frame run had a ~9822-point
