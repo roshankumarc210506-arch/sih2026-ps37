@@ -27,11 +27,26 @@ function dets = sihLidarClusterDetections(lidarSensor, egoVehicle, poses, time, 
 %        wired into the real pipeline — not a silent bug, a hard error
 %        on the first LiDAR detection. Fixed by reshaping both pts and
 %        labels to flat Nx3/Nx1 immediately after retrieval.
-%     4. minDistance/minPoints below are reasoned defaults, not measured
-%        — smallest actor footprint is ~0.9x0.6m (PushCart/Pedestrian),
-%        0.6m clustering distance should keep single objects merged
-%        without bridging distinct nearby actors, but this needs
-%        checking against REAL point density, not just object size.
+%     4. minDistance/minPoints: 0.6m was the unmeasured reasoned default.
+%        Day 4 first tried 0.75m based on real OverSegmented evidence
+%        (137 instances at 0.6m, median size 6 points) -- caused a severe
+%        regression (false tracks nearly doubled, every diagnostic bucket
+%        read 0) and was reverted. Added a raw-cluster-count-per-frame
+%        diagnostic (sihLidarDiag RawClusterCounts) to establish a real
+%        baseline (mean 18.66/frame at 0.6m) before trying again. Now on
+%        a second, much smaller attempt at 0.65m -- see the constant's
+%        own comment below for the full reasoning and what to check.
+%     5. Day 4 (v5): restructured to compute the cluster centroid and run
+%        the actor-attribution gate BEFORE any accept/reject branching
+%        (moved up from after the size filter), since two new diagnostic
+%        paths (FilteredTooSmall/FilteredTooBig, MatchedPosError) also
+%        need them. The actor-gate distance check itself (nearest real
+%        actor within 2.0m of the centroid) was needed a third time --
+%        ground-rejection attribution, class-confusion attribution, and
+%        now the FilteredTooSmall diagnostic -- so it's extracted into
+%        the local sihLidarNearestActor helper below instead of being
+%        duplicated again. All of this is purely observational: it does
+%        NOT change which detections get emitted to the tracker.
 
 dets = {};
 
@@ -53,7 +68,21 @@ if isempty(pts)
     return
 end
 
-minDistance = 0.6;   % m, TUNABLE — see header note (3)
+minDistance = 0.60;  % m, 2nd attempt. 0.6 baseline raw cluster count
+                      % measured first (mean 18.66/frame, median 19, min 8,
+                      % max 30 -- see sihLidarDiag RawClusterCounts). Prior
+                      % attempt jumped to 0.75 (25% increase) and caused a
+                      % severe regression (every diagnostic bucket read 0,
+                      % false tracks nearly doubled) -- likely merged most/
+                      % all of the ground plane into oversized clusters
+                      % that blew past maxPoints=200 before reaching any
+                      % tagging logic. This time: a much smaller, ~8%
+                      % increase, specifically to avoid repeating that
+                      % failure mode. CHECK THE RAW CLUSTER COUNT FIRST in
+                      % the new run's output -- if it collapses sharply
+                      % from the 0.6 baseline above, stop and revert
+                      % immediately rather than reading further into the
+                      % other diagnostics, same as last time.
 labels = reshape(pcsegdist(ptCloud, minDistance), [], 1);
 
 minPoints = 5;       % clusters smaller than this are treated as noise
@@ -64,6 +93,10 @@ maxPoints = 200;      % clusters larger than this are treated as ground/
                        % real actor cluster, max observed 55), passing
                        % through as a phantom detection every single frame.
 uniqueLabels = unique(labels(labels > 0));
+sihLidarDiag('recordFrameCount', numel(uniqueLabels));   % (v4) DIAGNOSTIC:
+% raw cluster count BEFORE minPoints/maxPoints filtering, this frame.
+% See sihLidarDiag.m header -- added to see pcsegdist's actual behavior
+% before touching minDistance again.
 
 % Ground truth positions, for nearest-actor attribution (class-confusion
 % purposes only — this does NOT feed the tracker, purely for deciding
@@ -73,22 +106,86 @@ for k = 1:numel(poses)
     truePos(k,:) = poses(k).Position(1:2);
 end
 
+claimedActorIDs = [];   % DIAGNOSTIC (Day 4): actors already matched to a
+                        % cluster this frame -- see sihLidarDiag.m header
+
 for L = uniqueLabels(:)'
-    mask = (labels == L);
-    if nnz(mask) < minPoints || nnz(mask) > maxPoints
+    mask        = (labels == L);
+    clusterSize = nnz(mask);
+    clusterPts  = pts(mask, :);
+    centroid    = mean(clusterPts, 1);   % [x y z], assumed ego-frame --
+    % computed up front (v5): every diagnostic path below, including
+    % clusters the size filter is about to drop, needs the centroid.
+
+    if clusterSize < minPoints || clusterSize > maxPoints
+        if clusterSize < minPoints
+            % Day 4 (v5): does a real actor sit within the attribution
+            % gate of a cluster minPoints=5 is about to drop as noise?
+            % Same WrongfulReject-style check as the ground-height filter
+            % below -- answers whether minPoints=5 is wrongly dropping
+            % real small detections, or whether this is genuinely noise.
+            actorID = sihLidarNearestActor(centroid, poses, truePos);
+            if actorID > 0 && isKey(classOf, actorID)
+                classNum = double(classOf(actorID));
+            elseif actorID > 0
+                classNum = 0;   % AgentClass.Unknown
+            else
+                classNum = NaN;
+            end
+            sihLidarDiag('record', 'FilteredTooSmall', clusterSize, centroid(3), classNum);
+        else
+            sihLidarDiag('record', 'FilteredTooBig', clusterSize, centroid(3));
+        end
         continue
     end
 
-    clusterPts = pts(mask, :);
-    centroid   = mean(clusterPts, 1);   % [x y z], assumed ego-frame
+    zStd = std(clusterPts(:,3));
+    isGroundLike = centroid(3) < cfg.Lidar.GroundZMax && zStd < cfg.Lidar.GroundZStdMax;
 
-    actorID = -1;
-    if ~isempty(poses)
-        d = hypot(truePos(:,1) - centroid(1), truePos(:,2) - centroid(2));
-        [dmin, idx] = min(d);
-        if dmin < 2.0   % gate: don't attribute to a wildly distant actor
-            actorID = poses(idx).ActorID;
+    [actorID, dmin] = sihLidarNearestActor(centroid, poses, truePos);
+
+    % Day 4: reject ground-plane fragments that a point-count filter alone
+    % can't catch -- see cfg.Lidar.GroundZ* header in sihConfig.m. The
+    % actor-gate check above now runs FIRST purely so the diagnostic below
+    % can tell a "clean" ground rejection (no real actor anywhere nearby)
+    % apart from a "wrongful" one (an actor WAS within the 2.0m gate, so
+    % this cluster would have been Matched/OverSegmented without the
+    % height filter) -- the actual behavior (continue, skip attribution)
+    % is unchanged either way; this is measurement only.
+    if isGroundLike
+        if actorID > 0
+            if isKey(classOf, actorID)
+                classNum = double(classOf(actorID));
+            else
+                classNum = 0;   % AgentClass.Unknown
+            end
+            sihLidarDiag('record', 'WrongfulReject', clusterSize, centroid(3), classNum);
+        else
+            sihLidarDiag('record', 'GroundRejected', clusterSize, centroid(3));
         end
+        continue
+    end
+
+    % DIAGNOSTIC (Day 4) -- record only, does not affect actorID/reported
+    % below or anything sihLidarClusterDetections.m returns. clusterSize
+    % and centroid height (z) are passed through so ground-plane
+    % fragments (small, low z) can be told apart from scattered noise.
+    clusterZ = centroid(3);
+    if actorID > 0
+        if ismember(actorID, claimedActorIDs)
+            sihLidarDiag('record', 'OverSegmented', clusterSize, clusterZ);
+        else
+            sihLidarDiag('record', 'Matched', clusterSize, clusterZ);
+            % (v5) empirical centroid-to-truth position error for this
+            % Matched cluster -- dmin IS that distance, already computed
+            % by the actor-gate helper above (the nearest truePos point,
+            % which for a Matched cluster is by definition the matched
+            % actor). Feeds the R noise-model question in sihLidarDiag summary.
+            sihLidarDiag('recordPosError', dmin);
+            claimedActorIDs(end+1) = actorID; %#ok<AGROW>
+        end
+    else
+        sihLidarDiag('record', 'Unattributed', clusterSize, clusterZ);
     end
 
     if actorID > 0 && isKey(classOf, actorID)
@@ -126,4 +223,25 @@ for L = uniqueLabels(:)'
 end
 
 dets = dets(:);
+end
+
+% ------------------------------------------------------------------------
+function [actorID, dmin] = sihLidarNearestActor(centroid, poses, truePos)
+%SIHLIDARNEARESTACTOR  Nearest real actor to a cluster centroid, gated at 2.0m.
+%   Shared actor-attribution check (v5): needed a third time -- ground-
+%   rejection attribution, class-confusion attribution, and the Day 4
+%   FilteredTooSmall diagnostic -- so it's a helper now instead of being
+%   duplicated inline again. dmin is the raw nearest-actor distance
+%   regardless of whether the 2.0m gate passed (callers that need the
+%   empirical position error, e.g. the Matched diagnostic, reuse it
+%   directly rather than recomputing).
+actorID = -1;
+dmin    = Inf;
+if ~isempty(poses)
+    d = hypot(truePos(:,1) - centroid(1), truePos(:,2) - centroid(2));
+    [dmin, idx] = min(d);
+    if dmin < 2.0   % gate: don't attribute to a wildly distant actor
+        actorID = poses(idx).ActorID;
+    end
+end
 end
