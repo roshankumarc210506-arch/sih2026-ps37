@@ -110,6 +110,18 @@ reconfirmed since M3's last update; do not swap GlobalPlanner from stub to real 
 - **`SihEgoStateBus`** — **DELETED Day 2**, confirmed via `sihDefineBuses()` output
   (`SihEgoStateBus : DELETED (was duplicate of SihEgoBus)`). `SihEgoBus` is now the single canonical
   ego bus.
+  > **⚠️ CONTRADICTION FLAGGED (2026-08-29), NOT YET RESOLVED:** Section 6 below still lists
+  > Control's Model Reference port 2 as `ego_state (SihEgoStateBus)` — a bus this section says
+  > no longer exists. One of these two sections is stale. **Do not assume either is correct.**
+  > Verify directly before the next model build/run:
+  > ```matlab
+  > get_param(find_system('sih_top_model/Control','SearchDepth',0),'ModelNameDialog')
+  > ```
+  > then check `M4_Control.slx`'s actual root-level port 2 data type. If it's still typed
+  > `SihEgoStateBus`, the model will error on rebuild since that bus object no longer exists in
+  > the base workspace. If it's already retyped to `SihEgoBus`, Section 6 below just needs its
+  > text updated to match. Either way, update whichever section is wrong once checked — don't
+  > leave this contradiction sitting in the doc.
 - **`M4_VehicleDynamics.slx` now exists and is wired into the top-level model** — real plant with
   `steering_angle`/`acceleration` inputs, `ego_state`/`actor_pose` outputs. This appears to resolve
   the long-standing reconciliation question, but the exact wiring hasn't been independently traced
@@ -172,8 +184,10 @@ Bus: `SihControlCmdBus` (defined in `control/createM4BusObjects.m`)
 **Status Day 2:** Control is REAL — wired via a `Model Reference` block to M4's `control/M4_Control.slx`
 (not a nested Subsystem, deliberately, since `.slx` is binary and git can't merge it — keeps M4's file
 and the top-level model as separate files nobody collides on). Port order:
-1=`plan` (`SihPlanBus`), 2=`ego_state` (`SihEgoStateBus`), 3=`driving_mode` (`DrivingMode` enum).
-Output 1=`cmd` (`SihControlCmdBus`). All ports nonvirtual (required for Model Reference).
+1=`plan` (`SihPlanBus`), 2=`ego_state` (⚠️ **see Section 4 contradiction flag above — verify whether
+this is still `SihEgoStateBus` or has been retyped to `SihEgoBus` before trusting this line**),
+3=`driving_mode` (`DrivingMode` enum). Output 1=`cmd` (`SihControlCmdBus`). All ports nonvirtual
+(required for Model Reference).
 
 The Simulink block itself is a compiled stub with correct types (constant output); the real NMPC
 algorithm is validated in plain MATLAB (`control/setup_m4_day1.m`) but not yet ported into the block
@@ -212,14 +226,34 @@ stubs run at the base rate.
 `metrics/`, `model/`. Two known exceptions, not yet fixed: `Prediction/` (capital P, M2's) and
 `scenario_decision_logic/` (M5's, expected `decision/`). Low priority, flagged.
 
-## 10. Scenarios (M5 owner) — RESOLVED
+## 10. Scenarios (M5 owner) — RESOLVED, CORRECTED (2026-08-29)
 
-- ~~M5's RoadRunner requirement~~ — **RESOLVED (2026-08-29).** All 5 scenarios built in
-  Driving Scenario Designer, RoadRunner dropped entirely. Village road + urban intersection
-  (the 2 PS-required scenes) get extra visual/behavioral detail in DSD instead of a separate
-  tool. Confirmed directly by M6 with full decision history (5 documented back-and-forths,
-  final confirmation 2026-08-29). Technical report must document this substitution and
-  reasoning explicitly, since it deviates from the PS's literal wording.
+- **RoadRunner requirement — CONFIRMED REQUIRED.** Verified directly against the actual official
+  PS37 PDF (not a relayed team summary), Expected Solution section: *"...including at least two
+  detailed RoadRunner scenes such as a village road and an urban intersection..."* This is a
+  stated requirement, distinct from the softer "encouraged" language used elsewhere in the PDF
+  for the general MathWorks toolset (RoadRunner, Automated Driving Toolbox, etc. are "encouraged"
+  as a tool list in the Description section — the two RoadRunner *scenes* specifically are named
+  as an expectation in the Expected Solution section, different sentence, stronger wording).
+  > **This entry corrects a prior, wrong "RESOLVED" entry** (also dated 2026-08-29, citing "5
+  > documented back-and-forths") which concluded RoadRunner was dropped entirely in favor of
+  > all-DSD. That conclusion was never checked against the actual PDF — only against relayed
+  > team chat summaries, across five separate rounds, none of which went back to the source
+  > document. Corrected the same day once the primary source was actually opened. **Lesson:
+  > for any question about a literal PS requirement, check the actual PDF before treating a
+  > team decision as final, no matter how many people have agreed on it.**
+- Village road and urban intersection must be built in RoadRunner. The other 3 scenarios
+  (highway merge, dense market, cattle crossing) can stay in Driving Scenario Designer.
+- **Open, needs immediate answer:** does anyone on the team have RoadRunner access/license?
+  This determines the actual path forward:
+  - If yes: get a timeline for rebuilding those 2 scenes in RoadRunner instead of DSD.
+  - If no: this is a genuine tooling-access constraint, not a preference — needs escalation to
+    a mentor/faculty advisor for an explicit compliance decision (e.g. requesting a license, or
+    getting formal sign-off on a documented substitution). This should NOT be settled by another
+    internal team vote — it needs someone with actual authority over PS compliance.
+- Whatever the outcome, the technical report must document the final approach and reasoning
+  explicitly, since any deviation from the PS's literal wording needs to be a stated, deliberate
+  choice a judge can see, not a silent gap.
 
 ## 11. Open items — genuinely unresolved as of Day 2
 
@@ -237,3 +271,9 @@ stubs run at the base rate.
   whether this is always safe or could silently misassign ego's pose in some scenario configurations.
 - **Duplicate/stale files in `Prediction/`** — RESOLVED Day 2, real shadowing bug found and fixed
   (see Section 1).
+- **`SihEgoStateBus` vs `SihEgoBus` contradiction between Sections 4 and 6** — flagged 2026-08-29,
+  NOT YET RESOLVED. See the ⚠️ note in Section 4. Verify Control's real port 2 type before the
+  next model build.
+- **RoadRunner requirement** — CORRECTED 2026-08-29 (see Section 10). Now confirmed required, not
+  dropped. Open sub-question: team's actual RoadRunner access/license status, unknown as of this
+  writing.
