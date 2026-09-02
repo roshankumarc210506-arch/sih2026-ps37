@@ -38,6 +38,19 @@ egoVehicle = vehicle(scenario, ...
     'Mesh',         sihActorMesh(AgentClass.Car, [4.7 1.8 1.5]), ...
     'Position',     [0 -1.5 0]);
 smoothTrajectory(egoVehicle, roadCenters + [0 -1.5 0], 8);
+% Day 4 DECISION: stays scripted, NOT swapped for M4's real ego trajectory.
+% M4's real trajectory only covers X:0-55.5m; this scenario's other 6
+% actors are choreographed across X:10-175m (see their smoothTrajectory
+% calls below) -- swapping would mean 5 of 7 actors never come near ego
+% at all, gutting the occlusion/close-crossing stress-testing this
+% scenario exists for. Also: this scenario is explicitly temporary (see
+% file header -- "swap this out for M5's scenario file"), and wiring the
+% ego actor to be pose-driven externally is already M5's own Phase 1
+% task for her real scenario files (task-split doc), not something to
+% bolt onto this throwaway test bench. Every Day 4 result (ground
+% filter, dedup, tracker tuning) was measured against THIS scripted
+% path -- changing it now would invalidate that baseline for a scenario
+% about to be replaced anyway.
 
 % ---------------- 1. Oncoming car ----------------
 a = vehicle(scenario, 'ClassID', sihScenarioClassID(AgentClass.Car), 'Name','OncomingCar', ...
