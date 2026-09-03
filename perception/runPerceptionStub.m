@@ -27,7 +27,10 @@ cfg = sihConfig();
 rng(cfg.RandomSeed);
 
 sihCreateBuses(cfg);
-[scenario, egoVehicle, classOf] = sihBuildScenario(cfg);
+% Phase 2 scenario swap -- revert this line to sihBuildScenario(cfg) to return to Phase 1 test bench.
+% Change SCENARIO_NAME to run a different M5 scenario.
+SCENARIO_NAME = 'urbanIntersection';   % options: villageRoad | urbanIntersection | highwayMerge | denseMarket | cattleCrossing
+[scenario, egoVehicle, classOf] = sihBuildScenarioM5(SCENARIO_NAME, cfg);
 [tracker, trackerName]          = sihCreateTracker(cfg);
 sihClassVoter('reset');
 sihLidarDiag('reset');   % DIAGNOSTIC (Day 4) -- see sihLidarDiag.m header
