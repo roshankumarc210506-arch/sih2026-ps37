@@ -110,18 +110,11 @@ reconfirmed since M3's last update; do not swap GlobalPlanner from stub to real 
 - **`SihEgoStateBus`** — **DELETED Day 2**, confirmed via `sihDefineBuses()` output
   (`SihEgoStateBus : DELETED (was duplicate of SihEgoBus)`). `SihEgoBus` is now the single canonical
   ego bus.
-  > **⚠️ CONTRADICTION FLAGGED (2026-08-29), NOT YET RESOLVED:** Section 6 below still lists
-  > Control's Model Reference port 2 as `ego_state (SihEgoStateBus)` — a bus this section says
-  > no longer exists. One of these two sections is stale. **Do not assume either is correct.**
-  > Verify directly before the next model build/run:
-  > ```matlab
-  > get_param(find_system('sih_top_model/Control','SearchDepth',0),'ModelNameDialog')
-  > ```
-  > then check `M4_Control.slx`'s actual root-level port 2 data type. If it's still typed
-  > `SihEgoStateBus`, the model will error on rebuild since that bus object no longer exists in
-  > the base workspace. If it's already retyped to `SihEgoBus`, Section 6 below just needs its
-  > text updated to match. Either way, update whichever section is wrong once checked — don't
-  > leave this contradiction sitting in the doc.
+> **RESOLVED (verified directly, this session):** `M4_Control/ego_state`'s `OutDataTypeStr` was
+> checked with `get_param('M4_Control/ego_state', 'OutDataTypeStr')` and confirmed as
+> `Bus: SihEgoBus`, not `SihEgoStateBus`. Section 6 below has been updated to match. The earlier
+> `sihBuildTopModel.m` fix (this session) already routes real `SihEgoBus` data from Perception into
+> `Control/2` -- confirmed via a clean end-to-end model run, no stub involved.
 - **`M4_VehicleDynamics.slx` now exists and is wired into the top-level model** — real plant with
   `steering_angle`/`acceleration` inputs, `ego_state`/`actor_pose` outputs. This appears to resolve
   the long-standing reconciliation question, but the exact wiring hasn't been independently traced
