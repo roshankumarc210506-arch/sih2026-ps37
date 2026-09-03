@@ -63,12 +63,125 @@ cfg.Sensor(3).FalseAlarmRate = 0.08;
 
 cfg.MeasZNoise = 0.05;    % m^2, keeps the (unused) z channel from drifting
 
+% ---------- LiDAR ground-plane rejection (Day 4 addition) ----------
+% Day 3's maxPoints=200 filter (below, in sihLidarClusterDetections.m)
+% assumed the ground plane always segments into ONE big ~9822-point blob.
+% The Day 4 diagnostic (sihLidarDiag.m) showed the dominant false-track
+% source instead sits at road height (median cluster centroid z = 0.00m,
+% vs 0.83m for real matched actors) even though several of these clusters
+% are as large as 176 points -- comparable to, or bigger than, real actor
+% clusters (median 27, up to 196 points). A point-count ceiling alone
+% can't reliably tell these apart, so height is used as the actual
+% discriminator: a cluster is rejected as ground if it's both LOW (mean
+% height below GroundZMax) AND FLAT (height std-dev below GroundZStdMax)
+% -- the flatness check exists specifically so a real, low-profile object
+% (e.g. glancing off a PushCart's lower body) isn't rejected on height
+% alone if its points still span meaningful vertical extent.
+% REASONED DEFAULTS, NOT YET VERIFIED against real per-point height
+% distributions -- only the diagnostic's median/range summary stats were
+% available when these were chosen. Re-check against the post-change
+% "Missed objects" and "Per-actor tracking" numbers (not just false-track
+% count) to confirm no real actor is being wrongly suppressed.
+cfg.Lidar.GroundZMax    = 0.15;  % m, reject if mean cluster height below this
+cfg.Lidar.GroundZStdMax = 0.10;  % m, AND cluster height std-dev below this
+
 % ---------- Tracker tuning ----------
-cfg.Tracker.AssignmentThreshold  = 40;    % normalised distance gate
-cfg.Tracker.ConfirmationThreshold = [3 5];% M-of-N to confirm
+cfg.Tracker.AssignmentThreshold  = 60;    % Day 4, 3rd pass: was 40.
+                                           % ConfirmationThreshold was ruled
+                                           % out (see above). Diagnostic
+                                           % then showed 95% of false
+                                           % tracks (987/1036) sit a MEDIAN
+                                           % of just 0.46m from an already-
+                                           % matched real track -- i.e.
+                                           % duplicate/split tracks of the
+                                           % SAME real object, not ghosts
+                                           % (only 5% were truly isolated).
+                                           % Likely tied to Day 2's own
+                                           % documented finding: vision/
+                                           % radar report a point near an
+                                           % object's near SURFACE (not
+                                           % centroid), offset scaling with
+                                           % size -- two sensors on the
+                                           % same real object can legitimately
+                                           % disagree by close to this much,
+                                           % which a too-tight gate reads as
+                                           % two different objects. 60 is a
+                                           % MODERATE loosening, not
+                                           % extreme -- the real risk is
+                                           % merging genuinely distinct
+                                           % close objects (TwoWheeler/
+                                           % Pedestrian crossing cases,
+                                           % already this tracker's known
+                                           % weak point without JPDA -- see
+                                           % sihCreateTracker.m). Report
+                                           % only for this pass -- if
+                                           % trackYield drops meaningfully
+                                           % below ~100% or TwoWheeler/
+                                           % Pedestrian per-actor tracking
+                                           % falls, that's overcorrection
+                                           % (real distinct objects merging),
+                                           % back off toward 50 rather than
+                                           % push further same direction.
+cfg.Tracker.ConfirmationThreshold = [3 5];% Day 4: RULED OUT as a lever.
+                                           % [4 6] (~same real-frame window
+                                           % as [3 5], see below) gave
+                                           % BIT-IDENTICAL results. [9 15]
+                                           % (~5 real frames, same 0.6
+                                           % ratio, isolating window-size)
+                                           % barely moved anything and what
+                                           % little it moved was SLIGHTLY
+                                           % WORSE (false tracks/frame
+                                           % 4.1774->4.2016, missed objects
+                                           % unchanged to 4dp). Root cause
+                                           % identified: the Day 1 ghost-ID
+                                           % fix calls tracker() up to 3x
+                                           % per real 0.1s frame (once per
+                                           % sensor), so [M N] counts
+                                           % sensor-updates not frames --
+                                           % but even at ~5 real frames'
+                                           % worth, no benefit appeared.
+                                           % Conclusion: the false tracks
+                                           % surviving the LiDAR ground
+                                           % filter are genuinely
+                                           % persistent -- not surviving on
+                                           % a technicality of confirmation
+                                           % window length. Reverted to
+                                           % original value; next lever to
+                                           % investigate is AssignmentThreshold
+                                           % (below), since persistence this
+                                           % strong points at how tracks get
+                                           % CREATED, not how long they're
+                                           % allowed to live.
 cfg.Tracker.DeletionThreshold     = [5 5];% M-of-N to delete
 cfg.Tracker.ClutterDensity        = 1e-6; % JPDA only
 cfg.Tracker.InitVelStd            = 6;    % m/s, initial velocity uncertainty
+
+% ---------- Post-hoc confirmed-track deduplication (Day 4) ----------
+% 95% of false tracks were found to sit a median 0.46m from an already-
+% matched real track (candidate duplicates, not ghosts -- see
+% runPerceptionStub.m's NearMatched diagnostic). AssignmentThreshold
+% loosening (40->60) barely helped, so this promotes that SAME
+% distance+class check from diagnostic to an actual post-hoc filter on
+% the tracker's confirmed list, rather than relying on the tracker's own
+% assignment gate to prevent duplicates from forming in the first place.
+% 0.6m chosen deliberately tighter than a round 1.0m: comfortably above
+% the measured 0.46m median (catches the real pattern) but well short of
+% real-world separation between genuinely distinct nearby actors -- the
+% failure mode to avoid is merging two real crossing agents (TwoWheeler/
+% Pedestrian, this tracker's known weak point without JPDA).
+%
+% RESULT at 0.6m: false tracks/frame 4.18->2.67 (-36%), yield 116%->94%,
+% TwoWheeler/Pedestrian/Pedestrian2 per-actor tracking each lost only 1-2
+% of 248 frames (checked -- not the merging failure mode above).
+%
+% RESIDUAL, NOT YET ACTED ON: of what's still false after this filter,
+% 93% is STILL NearMatched, but median distance moved from 0.46m to
+% 0.80m -- the close-in duplicates are gone, what's left sits farther
+% out. A second dedup pass at a larger cap could plausibly catch more,
+% but with less margin against the same crossing-agent-merge risk -- if
+% this gets revisited, redo the SAME TwoWheeler/Pedestrian per-actor
+% check at whatever new distance is tried, don't assume it's still safe.
+cfg.Tracker.DedupCapDistance      = 0.6;  % m, see runPerceptionStub.m
 
 % ---------- Contract-format extras ----------
 cfg.MinSpeedForHeading = 0.25;  % m/s below this, heading is unreliable

@@ -14,6 +14,18 @@ function [tracker, name] = sihCreateTracker(cfg)
 %   JPDA is preferred because it handles the closely-spaced-crossing case
 %   (two pedestrians, or a two-wheeler squeezing past an auto) far better
 %   than GNN's hard one-to-one assignment.
+%
+%   TODO (Day 4, deferred not dropped): the LiDAR height-based ground
+%   filter (sihLidarClusterDetections.m, cfg.Lidar.GroundZ*) wrongfully
+%   rejects real TwoWheeler clusters more than any other class (39% of
+%   all wrongful rejections -- see sihLidarDiag.m). That's the SAME class
+%   already flagged above as this tracker's weakest point without JPDA.
+%   Two independent weaknesses landing on the same class is worth
+%   re-checking, but deliberately NOT investigated now -- Day 4's tracker
+%   retune (cfg.Tracker.ConfirmationThreshold etc.) is about to change the
+%   false-track landscape this measurement was taken against. Re-measure
+%   TwoWheeler's wrongful-rejection share AFTER retuning, against the new
+%   baseline, before deciding whether it still needs a fix.
 
 if nargin < 1, cfg = sihConfig(); end
 

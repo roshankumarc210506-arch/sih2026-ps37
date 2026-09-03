@@ -77,22 +77,33 @@ function actorID = sihRecoverActorID(det, poses)
 %   in `poses`). poses excludes ego and is repositioned starting at 1, so
 %   poses(idx) silently returns the WRONG actor for every idx that happens
 %   to still be in-bounds (only out-of-range idx values, like ego-excluded
-%   gaps or the -1 false-alarm sentinel, used to throw). Match by ActorID
+%   gaps or a negative false-alarm sentinel, used to throw). Match by ActorID
 %   value instead of treating TargetIndex as a position.
+idx = NaN;   % stays NaN if the field access itself fails below -- treated
+             % as a genuine anomaly (any negative value is the documented
+             % benign false-alarm case, see catch block)
 try
     idx     = det.ObjectAttributes{1}.TargetIndex;
     match   = find([poses.ActorID] == idx, 1);
     actorID = poses(match).ActorID;   % errors (caught below) if match is empty
 catch
-    % No poses entry has this ActorID: either a real false alarm
-    % (TargetIndex == -1, MATLAB's own "no source actor" sentinel) or an
-    % actor not currently in `poses`. Surface it loudly rather than
-    % silently misclassifying every single detection.
     actorID = -1;
-    warning('sihRealDetections:actorIDRecoveryFailed', ...
-        ['Could not recover source ActorID from a real detection. ' ...
-         'Inspect dets{1}.ObjectAttributes structure and fix ' ...
-         'sihRecoverActorID to match the real field name.']);
+    % Day 4 (corrected): MathWorks' own ObjectAttributes doc for
+    % drivingRadarDataGenerator/visionDetectionGenerator states "For
+    % false alarms, this value is negative" -- NOT specifically -1. An
+    % earlier version of this fix assumed exactly -1 (inherited from
+    % this file's own prior comment, unverified) and would have wrongly
+    % flagged TargetIndex=-2 as a genuine anomaly; checked against the
+    % actual MathWorks docs before shipping that, and corrected here.
+    % Only warn if idx is non-negative (names a real ActorID that should
+    % be findable but isn't) or NaN (the field access itself failed).
+    if isnan(idx) || idx >= 0
+        warning('sihRealDetections:actorIDRecoveryFailed', ...
+            ['Could not recover source ActorID from a real detection ' ...
+             '(TargetIndex=%s, non-negative -- NOT the documented ' ...
+             'negative false-alarm sentinel). Inspect dets{1}.ObjectAttributes ' ...
+             'structure.'], mat2str(idx));
+    end
 end
 end
 
